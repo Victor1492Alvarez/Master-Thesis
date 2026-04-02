@@ -46,9 +46,6 @@ plt.rcParams.update(
 )
 
 
-# ============================================================
-# Core surrogate model
-# ============================================================
 class GaussianSurrogate1D:
     def __init__(self, kernel_name: str = "Matern 2.5", use_white_kernel: bool = False, alpha: float = 1e-8):
         self.kernel_name = kernel_name
@@ -127,9 +124,6 @@ class GaussianSurrogate1D:
         }
 
 
-# ============================================================
-# Session state
-# ============================================================
 def init_state() -> None:
     defaults = {
         "app_initialized": False,
@@ -153,6 +147,7 @@ def init_state() -> None:
         "external_test_df": None,
         "input_column": None,
         "output_column": None,
+        "status_column": None,
         "detected_input_candidates": [],
         "run_summary": {},
         "analyzer_done": False,
@@ -185,9 +180,6 @@ def reset_workflow() -> None:
     st.rerun()
 
 
-# ============================================================
-# Helpers
-# ============================================================
 def add_log(module: str, message: str) -> None:
     timestamp = datetime.now().strftime("%H:%M:%S")
     st.session_state["logs"][module].append(f"[{timestamp}] {message}")
@@ -250,10 +242,6 @@ def inject_styles() -> None:
             background: #fafafa;
             color: #444;
         }
-        .minor-note {
-            color: #4b4b4b;
-            font-size: 0.92rem;
-        }
         .section-title {
             font-size: 1.25rem;
             font-weight: 800;
@@ -311,6 +299,17 @@ def detect_input_candidates(columns: List[str]) -> List[str]:
             scored.append((col, score))
     scored.sort(key=lambda x: (-x[1], str(x[0]).lower()))
     return [name for name, _ in scored]
+
+
+def find_status_column(df: pd.DataFrame) -> Optional[str]:
+    for col in df.columns:
+        if str(col).strip().lower() == "status":
+            return col
+    return None
+
+
+def normalize_status(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip().str.lower()
 
 
 def choose_excel_engine(filename: str) -> Optional[str]:
@@ -376,7 +375,12 @@ def safe_percent_error(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
     return np.abs(y_true - y_pred) / denom * 100.0
 
 
-def summarize_runs(df: pd.DataFrame, input_col: str, output_col: Optional[str]) -> Dict[str, float]:
+def summarize_runs(
+    df: pd.DataFrame,
+    input_col: str,
+    output_col: Optional[str],
+    status_col: Optional[str] = None
+) -> Dict[str, float]:
     if input_col not in df.columns:
         return {
             "total_runs": 0,
@@ -389,15 +393,21 @@ def summarize_runs(df: pd.DataFrame, input_col: str, output_col: Optional[str]) 
     input_numeric = pd.to_numeric(df[input_col], errors="coerce")
     total_runs = int(input_numeric.notna().sum())
 
+    status_mask = pd.Series(True, index=df.index)
+    if status_col and status_col in df.columns:
+        status_mask = normalize_status(df[status_col]).eq("ok")
+
     if output_col and output_col in df.columns:
         output_numeric = pd.to_numeric(df[output_col], errors="coerce")
-        successful = int((input_numeric.notna() & output_numeric.notna()).sum())
+        successful_mask = input_numeric.notna() & output_numeric.notna() & status_mask
+        successful = int(successful_mask.sum())
     else:
         successful = 0
 
     erroneous = max(total_runs - successful, 0)
     ok_pct = (successful / total_runs * 100.0) if total_runs else 0.0
     err_pct = (erroneous / total_runs * 100.0) if total_runs else 0.0
+
     return {
         "total_runs": total_runs,
         "successful_runs": successful,
@@ -957,9 +967,6 @@ def build_rejection_diagnostics(
     return messages
 
 
-# ============================================================
-# Modal
-# ============================================================
 @st.dialog("Welcome to Gaussian Model Generator", width="large")
 def intro_dialog():
     st.markdown(
@@ -969,12 +976,15 @@ def intro_dialog():
         **How it works**
         1. It inspects the uploaded Aspen database.
         2. It detects candidate hydrogen-flow input columns.
-        3. It lets you confirm one input and one output.
-        4. It cleans the data and builds a representative external test split.
-        5. It performs 5-fold cross-validation on the training-validation data.
-        6. It retrains the final production model on the full 80% development set.
-        7. It evaluates the final model on the untouched external test set.
-        8. It packages reports, tables, code, and the reusable model.
+        3. It detects the `Status` column when available.
+        4. It lets you confirm one input and one output.
+        5. It counts successful runs using `Status = OK`.
+        6. It excludes non-converged or erroneous runs from the clean dataset.
+        7. It builds a representative external test split.
+        8. It performs 5-fold cross-validation on the training-validation data.
+        9. It retrains the final production model on the full 80% development set.
+        10. It evaluates the final model on the untouched external test set.
+        11. It packages reports, tables, code, and the reusable model.
 
         **Required file**
         - Aspen Plus Excel file in `.xlsx`, `.xlsm`, or `.xls` format.
@@ -995,9 +1005,6 @@ def intro_dialog():
         st.rerun()
 
 
-# ============================================================
-# Modules
-# ============================================================
 def module_database_analyzer():
     render_module_header(
         "analyzer",
@@ -1027,6 +1034,8 @@ def module_database_analyzer():
                 raise ValueError("The uploaded Excel file is empty.")
 
             st.session_state["raw_df"] = raw_df
+            st.session_state["status_column"] = find_status_column(raw_df)
+
             candidates = detect_input_candidates(list(raw_df.columns))
             st.session_state["detected_input_candidates"] = candidates
             set_module_status("analyzer", "ready")
@@ -1036,6 +1045,11 @@ def module_database_analyzer():
                 add_log("analyzer", f"Detected input candidates: {', '.join(map(str, candidates[:6]))}.")
             else:
                 add_log("analyzer", "No strong input-column candidates were detected automatically.")
+
+            if st.session_state["status_column"]:
+                add_log("analyzer", f"Detected status column: {st.session_state['status_column']}.")
+            else:
+                add_log("analyzer", "No status column detected. The app will fall back to non-null logic only.")
         except Exception as exc:
             set_module_status("analyzer", "error")
             add_log("analyzer", f"Database analysis failed: {exc}")
@@ -1046,11 +1060,10 @@ def module_database_analyzer():
         st.dataframe(pd.DataFrame({"Column": raw_df.columns.astype(str)}), use_container_width=True, height=220)
 
         candidate_options = st.session_state["detected_input_candidates"] or list(raw_df.columns)
-        input_default_index = 0
         input_selection = st.selectbox(
             "Proposed input column",
             options=candidate_options,
-            index=input_default_index,
+            index=0,
             help="Candidate column should represent hydrogen flow.",
         )
 
@@ -1061,7 +1074,12 @@ def module_database_analyzer():
             help="Target response to be modeled by the Gaussian surrogate.",
         )
 
-        summary = summarize_runs(raw_df, input_selection, output_selection)
+        summary = summarize_runs(
+            raw_df,
+            input_selection,
+            output_selection,
+            st.session_state.get("status_column"),
+        )
         st.session_state["run_summary"] = summary
 
         c1, c2, c3, c4 = st.columns(4)
@@ -1081,6 +1099,9 @@ def module_database_analyzer():
             key="output_confirm",
         )
 
+        if st.session_state.get("status_column"):
+            st.caption(f"Status-based filtering active using column: {st.session_state['status_column']}")
+
         if st.button("Confirm variable selections", use_container_width=True):
             input_ok = parse_yes_no(input_confirm)
             output_ok = parse_yes_no(output_confirm)
@@ -1094,10 +1115,17 @@ def module_database_analyzer():
                 set_module_status("cleaning", "ready")
 
                 inspection_df = pd.DataFrame([summary])
+                status_info = pd.DataFrame(
+                    {
+                        "Detected Status Column": [st.session_state.get("status_column") or "Not found"],
+                        "Successful Status Value Used": ["OK"],
+                    }
+                )
                 st.session_state["artifacts"]["database_inspection_summary.xlsx"] = to_excel_bytes(
                     {
                         "Summary": inspection_df,
                         "Detected Columns": pd.DataFrame({"Column": raw_df.columns.astype(str)}),
+                        "Status Detection": status_info,
                     }
                 )
 
@@ -1124,9 +1152,6 @@ def module_database_analyzer():
         key="proceed_m1",
     )
 
-    if st.session_state["analyzer_done"] and st.session_state["current_step"] < 2:
-        st.session_state["current_step"] = 2
-
     render_log("analyzer", "analyzer_log_view")
 
 
@@ -1149,16 +1174,25 @@ def module_cleaning_preparation():
             raw_df = st.session_state["raw_df"].copy()
             input_col = st.session_state["input_column"]
             output_col = st.session_state["output_column"]
+            status_col = st.session_state.get("status_column")
+
+            clean_df = raw_df.copy()
+            total_before = len(clean_df)
+
+            if status_col and status_col in clean_df.columns:
+                add_log("cleaning", f"Filtering rows using {status_col} == OK.")
+                clean_df = clean_df[normalize_status(clean_df[status_col]) == "ok"].copy()
+            else:
+                add_log("cleaning", "Status column not available. Falling back to non-null input/output filtering only.")
 
             add_log("cleaning", "Converting selected input and output columns to numeric form.")
-            clean_df = raw_df.copy()
             clean_df[input_col] = pd.to_numeric(clean_df[input_col], errors="coerce")
             clean_df[output_col] = pd.to_numeric(clean_df[output_col], errors="coerce")
 
-            total_before = len(clean_df)
             clean_df = clean_df[clean_df[input_col].notna()].copy()
             clean_df = clean_df[clean_df[output_col].notna()].copy()
             clean_df = clean_df.drop_duplicates(subset=[input_col, output_col]).sort_values(input_col).reset_index(drop=True)
+
             removed = total_before - len(clean_df)
 
             if len(clean_df) < 6:
@@ -1179,7 +1213,7 @@ def module_cleaning_preparation():
             set_module_status("cleaning", "completed")
             set_module_status("training", "ready")
 
-            add_log("cleaning", f"Removed {removed} invalid rows and kept {len(clean_df)} valid rows.")
+            add_log("cleaning", f"Removed {removed} invalid, non-converged, or duplicated rows.")
             add_log("cleaning", f"Representative split created: {len(train_val_df)} rows for training-validation and {len(external_test_df)} rows for external test.")
         except Exception as exc:
             set_module_status("cleaning", "error")
@@ -1628,9 +1662,6 @@ def module_test_packing():
     render_log("testing", "testing_log_view")
 
 
-# ============================================================
-# Sidebar
-# ============================================================
 def render_final_sidebar():
     with st.sidebar:
         st.header("Final Download Center")
@@ -1703,9 +1734,6 @@ def render_final_sidebar():
             reset_workflow()
 
 
-# ============================================================
-# Main
-# ============================================================
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     init_state()
