@@ -7,4 +7,3 @@ xlrd>=2.0
 matplotlib>=3.8
 reportlab>=4.0
 joblib>=1.3
-
