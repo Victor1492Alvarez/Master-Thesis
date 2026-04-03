@@ -748,8 +748,10 @@ def perform_cv(
         fold_results.append({"Fold": fold_idx, **metrics})
         fold_name = f"Fold_{fold_idx}"
         fold_tables[fold_name] = fold_df
-        fold_prediction_plots[f"{fold_name}_prediction.png"] = create_predicfold_results.append({"Fold": fold_idx, **metrics})
-        fold_name = f"_col,
+        fold_prediction_plots[f"{fold_name}_prediction.png"] = create_prediction_plot(
+            fold_df,
+            input_col,
+            output_col,
             f"Fold {fold_idx}: Aspen vs Gaussian Prediction",
             uncertainty_col="Predictive Std",
         )
@@ -921,8 +923,10 @@ def build_training_pdf(
     )
 
     cv_chart_width = page_width - summary_col_width
-    cv_chart = Image(io.BytesIO(chosen_cv["cv_metrics_plot"]), width=cv_chart_width - 0fold_results.append({"Fold": fold_idx, **metrics})
-        fold_name = f" Table(
+    cv_chart = Image(io.BytesIO(chosen_cv["cv_metrics_plot"]), width=cv_chart_width - 0.3 * cm, height=8.9 * cm)
+    cv_chart.hAlign = "CENTER"
+
+    top_block = Table(
         [[summary_table, cv_chart]],
         colWidths=[summary_col_width, page_width - summary_col_width],
         hAlign="CENTER",
@@ -1864,9 +1868,9 @@ def module_test_packing():
         )
 
         if "consolidated_model_report.pdf" in st.session_state["artifacts"]:
-            st.download_butfold_results.append({"Fold": fold_idx, **metrics})
-        fold_name = f""Fold": fold_idx, **metrics})
-        fold_name = f"ated_model_report.pdf"],
+            st.download_button(
+                "Download Consolidated Model Report (PDF)",
+                data=st.session_state["artifacts"]["consolidated_model_report.pdf"],
                 file_name="consolidated_model_report.pdf",
                 mime="application/pdf",
                 use_container_width=True,
@@ -1902,10 +1906,13 @@ def module_test_packing():
 
 def render_final_sidebar():
     with st.sidebar:
-        st.header("Final Download Centerfold_results.append({"Fold": fold_idx, **metrics})
-        fold_name = f"cs})
-        fold_name = f"esults.append({"Fold": fold_idx, **metrics})
-        fold_name = f"o("Downloads will be listed here after external testing is completed.")
+        st.header("Final Download Center")
+
+        if st.button("Reset workflow", use_container_width=True):
+            reset_workflow()
+
+        if not st.session_state["testing_done"]:
+            st.info("Downloads will be listed here after external testing is completed.")
             return
 
         preferred_order = [
@@ -1942,8 +1949,12 @@ def render_final_sidebar():
                     file_name=name,
                     mime=mime,
                     use_container_width=True,
-                    key=f"sidfold_results.append({"Fold": fold_idx, **metrics})
-        fold_name = f"_title=APP_TITLE, layout="wide")
+                    key=f"sidebar_{name}",
+                )
+
+
+def main():
+    st.set_page_config(page_title=APP_TITLE, layout="wide")
     init_state()
     inject_styles()
 
