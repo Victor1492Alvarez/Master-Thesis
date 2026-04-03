@@ -9,13 +9,15 @@ from typing import Dict, List, Optional, Tuple
 
 import joblib
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -24,7 +26,6 @@ from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF, WhiteK
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
-
 
 APP_TITLE = "Gaussian Model Generator"
 APP_SUBTITLE = "PtMeOH Gaussian surrogate modeling from Aspen Plus Excel data"
@@ -64,11 +65,14 @@ class GaussianSurrogate1D:
     def _build_kernel(self):
         if self.kernel_name == "RBF":
             base = ConstantKernel(1.0, (1e-3, 1e3)) * RBF(
-                length_scale=1.0, length_scale_bounds=(1e-3, 1e3)
+                length_scale=1.0,
+                length_scale_bounds=(1e-3, 1e3),
             )
         else:
             base = ConstantKernel(1.0, (1e-3, 1e3)) * Matern(
-                length_scale=1.0, length_scale_bounds=(1e-3, 1e3), nu=2.5
+                length_scale=1.0,
+                length_scale_bounds=(1e-3, 1e3),
+                nu=2.5,
             )
         if self.use_white_kernel:
             return base + WhiteKernel(noise_level=1e-6, noise_level_bounds=(1e-10, 1e-2))
@@ -102,12 +106,7 @@ class GaussianSurrogate1D:
     def fitted_kernel(self) -> str:
         return str(self.gpr.kernel_)
 
-    def export_bundle(
-        self,
-        model_name: str,
-        input_column: str,
-        output_column: str,
-    ) -> Dict:
+    def export_bundle(self, model_name: str, input_column: str, output_column: str) -> Dict:
         if not self.is_fitted:
             raise RuntimeError("Model must be fitted before export.")
         return {
@@ -260,10 +259,7 @@ def inject_styles() -> None:
 def render_header() -> None:
     st.markdown(f"<div class='app-title'>{APP_TITLE}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='app-subtitle'>{APP_SUBTITLE}</div>", unsafe_allow_html=True)
-    completed = sum(
-        int(st.session_state[f"{name}_done"])
-        for name in ["analyzer", "cleaning", "training", "testing"]
-    )
+    completed = sum(int(st.session_state[f"{name}_done"]) for name in ["analyzer", "cleaning", "training", "testing"])
     progress = completed / 4.0
     st.progress(progress, text=f"Workflow progress: {int(progress * 100)}%")
 
@@ -375,12 +371,7 @@ def safe_percent_error(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
     return np.abs(y_true - y_pred) / denom * 100.0
 
 
-def summarize_runs(
-    df: pd.DataFrame,
-    input_col: str,
-    output_col: Optional[str],
-    status_col: Optional[str] = None
-) -> Dict[str, float]:
+def summarize_runs(df: pd.DataFrame, input_col: str, output_col: Optional[str], status_col: Optional[str] = None) -> Dict[str, float]:
     if input_col not in df.columns:
         return {
             "total_runs": 0,
@@ -467,6 +458,119 @@ def representative_split(
     return train_df, test_df
 
 
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+
+
+def _format_pdf_value(value, decimals: int = 4) -> str:
+    if pd.isna(value):
+        return ""
+    if isinstance(value, (float, np.floating)):
+        return f"{float(value):.{decimals}f}"
+    if isinstance(value, (int, np.integer)):
+        return f"{int(value)}"
+    return str(value)
+
+
+def _estimate_col_weights(df: pd.DataFrame, max_rows: int = 20, decimals: int = 4) -> List[float]:
+    preview = df.head(max_rows).copy()
+    weights = []
+    for col in preview.columns:
+        values = [_format_pdf_value(col, decimals)]
+        values += [_format_pdf_value(v, decimals) for v in preview[col].tolist()]
+        max_len = max(len(v) for v in values) if values else 8
+        weights.append(min(max(max_len, 8), 28))
+    total = sum(weights) if weights else 1
+    return [w / total for w in weights]
+
+
+def build_pdf_table(
+    df: pd.DataFrame,
+    available_width: float,
+    max_rows: int = 20,
+    decimals: int = 4,
+    font_size: float = 7.0,
+    header_font_size: float = 7.2,
+    long_text_cols: Optional[List[str]] = None,
+) -> Table:
+    preview = df.head(max_rows).copy()
+    long_text_cols = long_text_cols or []
+
+    styles = getSampleStyleSheet()
+    header_style = ParagraphStyle(
+        "pdf_header",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=header_font_size,
+        leading=header_font_size + 1.2,
+        alignment=TA_CENTER,
+        textColor=colors.black,
+        wordWrap="CJK",
+    )
+    num_style = ParagraphStyle(
+        "pdf_num",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=font_size,
+        leading=font_size + 1.2,
+        alignment=TA_RIGHT,
+        wordWrap="CJK",
+    )
+    text_style = ParagraphStyle(
+        "pdf_text",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=font_size,
+        leading=font_size + 1.2,
+        alignment=TA_LEFT,
+        wordWrap="CJK",
+    )
+    justify_style = ParagraphStyle(
+        "pdf_justify",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=font_size,
+        leading=font_size + 1.2,
+        alignment=TA_JUSTIFY,
+        wordWrap="CJK",
+    )
+
+    weights = _estimate_col_weights(preview, max_rows=max_rows, decimals=decimals)
+    col_widths = [available_width * w for w in weights]
+
+    header = [Paragraph(str(col), header_style) for col in preview.columns]
+    rows = [header]
+
+    for _, row in preview.iterrows():
+        row_cells = []
+        for col, value in row.items():
+            text = _format_pdf_value(value, decimals)
+            if _is_number(value):
+                row_cells.append(Paragraph(text, num_style))
+            else:
+                style = justify_style if str(col) in long_text_cols else text_style
+                row_cells.append(Paragraph(text.replace("\n", "<br/>"), style))
+        rows.append(row_cells)
+
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.black),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f7f7")]),
+            ]
+        )
+    )
+    return table
+
+
 def create_prediction_plot(
     df_plot: pd.DataFrame,
     input_col: str,
@@ -475,7 +579,7 @@ def create_prediction_plot(
     uncertainty_col: Optional[str] = None,
 ) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.2, 4.6))
+    fig, ax = plt.subplots(figsize=(12.0, 3.9))
     ax.scatter(ordered[input_col], ordered[output_col], color="black", s=28, label="Aspen")
     ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.8, label="Gaussian model")
 
@@ -488,26 +592,28 @@ def create_prediction_plot(
     ax.set_xlabel(input_col)
     ax.set_ylabel(output_col)
     ax.grid(True, color="0.88", linewidth=0.8)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, loc="best")
+    fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.2, 4.2))
+    fig, ax = plt.subplots(figsize=(12.0, 3.1))
     x = np.arange(len(ordered))
-    ax.bar(x, ordered["Percent Error"], color="0.3", edgecolor="black", linewidth=0.6)
+    ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.5)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{v:.3g}" for v in ordered[input_col].tolist()], rotation=90)
+    ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
     ax.set_title(title)
     ax.set_xlabel(input_col)
     ax.set_ylabel("Percent Error [%]")
     ax.grid(True, axis="y", color="0.88", linewidth=0.8)
+    fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
-    fig, ax1 = plt.subplots(figsize=(8.2, 4.8))
+    fig, ax1 = plt.subplots(figsize=(10.5, 5.0))
     x = np.arange(len(metrics_df))
     width = 0.34
 
@@ -527,12 +633,13 @@ def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, frameon=False, loc="upper right")
     ax1.set_title("5-Fold Cross-Validation Metrics")
+    fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, output_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig, ax = plt.subplots(figsize=(10.8, 5.1))
     ax.scatter(ordered[input_col], ordered[output_col], color="black", s=30, label="Aspen points")
     ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=2.0, label="Gaussian model")
     ax.fill_between(
@@ -546,21 +653,23 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
     ax.set_xlabel(input_col)
     ax.set_ylabel(output_col)
     ax.grid(True, color="0.88", linewidth=0.8)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, loc="best")
+    fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_external_error_plot(df_plot: pd.DataFrame, input_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.6, 4.0))
+    fig, ax = plt.subplots(figsize=(12.0, 3.1))
     x = np.arange(len(ordered))
     ax.bar(x, ordered["Absolute Error"], color="0.4", edgecolor="black", linewidth=0.5)
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{v:.3g}" for v in ordered[input_col].tolist()], rotation=90)
+    ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
     ax.set_title("External Test Absolute Error by Run")
     ax.set_xlabel(input_col)
     ax.set_ylabel("Absolute Error")
     ax.grid(True, axis="y", color="0.88", linewidth=0.8)
+    fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
@@ -639,11 +748,15 @@ def perform_cv(
         fold_results.append({"Fold": fold_idx, **metrics})
         fold_name = f"Fold_{fold_idx}"
         fold_tables[fold_name] = fold_df
-        fold_prediction_plots[f"{fold_name}_prediction.png"] = create_prediction_plot(
-            fold_df, input_col, output_col, f"Fold {fold_idx}: Aspen vs Gaussian Prediction", uncertainty_col="Predictive Std"
+        fold_prediction_plots[f"{fold_name}_prediction.png"] = create_predicfold_results.append({"Fold": fold_idx, **metrics})
+        fold_name = f"_col,
+            f"Fold {fold_idx}: Aspen vs Gaussian Prediction",
+            uncertainty_col="Predictive Std",
         )
         fold_error_plots[f"{fold_name}_error.png"] = create_error_plot(
-            fold_df, input_col, f"Fold {fold_idx}: Percent Error"
+            fold_df,
+            input_col,
+            f"Fold {fold_idx}: Percent Error",
         )
 
         if enable_logs:
@@ -766,26 +879,6 @@ def build_text_summary(
     return "\n".join(lines)
 
 
-def simple_pdf_table(df: pd.DataFrame, max_rows: int = 20) -> Table:
-    preview = df.head(max_rows).fillna("").copy()
-    rows = [list(preview.columns)] + preview.astype(str).values.tolist()
-    table = Table(rows, repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
-                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]
-        )
-    )
-    return table
-
-
 def build_training_pdf(
     model_name: str,
     input_col: str,
@@ -796,47 +889,121 @@ def build_training_pdf(
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        rightMargin=1.4 * cm,
-        leftMargin=1.4 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        pagesize=landscape(A4),
+        rightMargin=1.2 * cm,
+        leftMargin=1.2 * cm,
+        topMargin=1.1 * cm,
+        bottomMargin=1.1 * cm,
     )
+
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Small", fontName="Helvetica", fontSize=8, leading=10))
+    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=9, leading=11, alignment=TA_LEFT))
+
+    page_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
     story = []
 
     story.append(Paragraph("Training & Validation Report", styles["Title"]))
+    story.append(Spacer(1, 0.28 * cm))
+    story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
+    story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
+    story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
+    story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
     story.append(Spacer(1, 0.35 * cm))
-    story.append(Paragraph(f"Model name: {model_name}", styles["BodyText"]))
-    story.append(Paragraph(f"Input variable: {input_col}", styles["BodyText"]))
-    story.append(Paragraph(f"Output variable: {output_col}", styles["BodyText"]))
-    story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["BodyText"]))
-    story.append(Spacer(1, 0.25 * cm))
+
+    summary_col_width = 8.6 * cm
+    summary_table = build_pdf_table(
+        chosen_cv["summary_df"],
+        available_width=summary_col_width - 0.4 * cm,
+        max_rows=10,
+        decimals=4,
+        font_size=7.2,
+        header_font_size=7.4,
+    )
+
+    cv_chart_width = page_width - summary_col_width
+    cv_chart = Image(io.BytesIO(chosen_cv["cv_metrics_plot"]), width=cv_chart_width - 0fold_results.append({"Fold": fold_idx, **metrics})
+        fold_name = f" Table(
+        [[summary_table, cv_chart]],
+        colWidths=[summary_col_width, page_width - summary_col_width],
+        hAlign="CENTER",
+    )
+    top_block.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+
+    story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
+    story.append(Spacer(1, 0.18 * cm))
+    story.append(top_block)
+    story.append(PageBreak())
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
-        story.append(simple_pdf_table(comparison_df, max_rows=10))
-        story.append(Spacer(1, 0.3 * cm))
-
-    story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
-    story.append(simple_pdf_table(chosen_cv["summary_df"], max_rows=10))
-    story.append(Spacer(1, 0.25 * cm))
-    story.append(Image(io.BytesIO(chosen_cv["cv_metrics_plot"]), width=16 * cm, height=9 * cm))
-    story.append(PageBreak())
-
-    for fold_name, fold_df in chosen_cv["fold_tables"].items():
-        story.append(Paragraph(f"{fold_name.replace('_', ' ')} results", styles["Heading2"]))
-        story.append(simple_pdf_table(fold_df, max_rows=18))
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(Image(io.BytesIO(chosen_cv["fold_prediction_plots"][f"{fold_name}_prediction.png"]), width=16 * cm, height=8.5 * cm))
         story.append(Spacer(1, 0.15 * cm))
-        story.append(Image(io.BytesIO(chosen_cv["fold_error_plots"][f"{fold_name}_error.png"]), width=16 * cm, height=7.0 * cm))
+        story.append(
+            build_pdf_table(
+                comparison_df,
+                available_width=page_width,
+                max_rows=10,
+                decimals=4,
+                font_size=7.0,
+                header_font_size=7.2,
+            )
+        )
+        story.append(PageBreak())
+
+    for fold_name, df_fold in chosen_cv["fold_tables"].items():
+        plot_key = f"{fold_name}_prediction.png"
+        error_key = f"{fold_name}_error.png"
+
+        story.append(Paragraph(f"{fold_name.replace('_', ' ')} results", styles["Heading2"]))
+        story.append(Spacer(1, 0.12 * cm))
+        story.append(
+            build_pdf_table(
+                df_fold,
+                available_width=page_width,
+                max_rows=18,
+                decimals=4,
+                font_size=6.4,
+                header_font_size=6.8,
+            )
+        )
+        story.append(Spacer(1, 0.25 * cm))
+
+        pred_chart = Image(io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]), width=page_width, height=8.5 * cm)
+        pred_chart.hAlign = "CENTER"
+        story.append(pred_chart)
+        story.append(PageBreak())
+
+        story.append(Paragraph(f"{fold_name.replace('_', ' ')} - Percent Error", styles["Heading2"]))
+        story.append(Spacer(1, 0.18 * cm))
+        err_chart = Image(io.BytesIO(chosen_cv["fold_error_plots"][error_key]), width=page_width, height=6.9 * cm)
+        err_chart.hAlign = "CENTER"
+        story.append(err_chart)
         story.append(PageBreak())
 
     param_df = pd.DataFrame(chosen_cv["parameter_log"])
     story.append(Paragraph("Temporary parameter log", styles["Heading2"]))
-    story.append(simple_pdf_table(param_df, max_rows=24))
+    story.append(Spacer(1, 0.15 * cm))
+    story.append(
+        build_pdf_table(
+            param_df,
+            available_width=page_width,
+            max_rows=25,
+            decimals=3,
+            font_size=6.1,
+            header_font_size=6.4,
+            long_text_cols=["Fitted Kernel", "Kernel Parameters", "kernel_parameters"],
+        )
+    )
+
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
@@ -854,13 +1021,17 @@ def build_consolidated_pdf(
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        rightMargin=1.4 * cm,
-        leftMargin=1.4 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        pagesize=landscape(A4),
+        rightMargin=1.2 * cm,
+        leftMargin=1.2 * cm,
+        topMargin=1.1 * cm,
+        bottomMargin=1.1 * cm,
     )
+
     styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=9, leading=11, alignment=TA_LEFT))
+
+    page_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
     story = []
 
     metrics_df = pd.DataFrame(
@@ -876,30 +1047,89 @@ def build_consolidated_pdf(
     )
 
     story.append(Paragraph("Consolidated Model Report", styles["Title"]))
+    story.append(Spacer(1, 0.28 * cm))
+    story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
+    story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
+    story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Spacer(1, 0.35 * cm))
-    story.append(Paragraph(f"Model name: {model_name}", styles["BodyText"]))
-    story.append(Paragraph(f"Input variable: {input_col}", styles["BodyText"]))
-    story.append(Paragraph(f"Output variable: {output_col}", styles["BodyText"]))
-    story.append(Spacer(1, 0.25 * cm))
+
+    summary_col_width = 8.6 * cm
+    metrics_table = build_pdf_table(
+        metrics_df,
+        available_width=summary_col_width - 0.4 * cm,
+        max_rows=10,
+        decimals=4,
+        font_size=7.2,
+        header_font_size=7.4,
+    )
+
+    external_chart_width = page_width - summary_col_width
+    external_chart = Image(io.BytesIO(external_plot_bytes), width=external_chart_width - 0.3 * cm, height=8.9 * cm)
+    external_chart.hAlign = "CENTER"
+
+    top_block = Table(
+        [[metrics_table, external_chart]],
+        colWidths=[summary_col_width, page_width - summary_col_width],
+        hAlign="CENTER",
+    )
+    top_block.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+
+    story.append(Paragraph("External test metrics and comparison chart", styles["Heading2"]))
+    story.append(Spacer(1, 0.18 * cm))
+    story.append(top_block)
+    story.append(PageBreak())
 
     story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
-    story.append(simple_pdf_table(cv_summary, max_rows=10))
-    story.append(Spacer(1, 0.25 * cm))
-
-    story.append(Paragraph("External test summary", styles["Heading2"]))
-    story.append(simple_pdf_table(metrics_df, max_rows=10))
-    story.append(Spacer(1, 0.25 * cm))
-    story.append(Image(io.BytesIO(external_plot_bytes), width=16 * cm, height=9 * cm))
-    story.append(Spacer(1, 0.25 * cm))
-
+    story.append(Spacer(1, 0.15 * cm))
+    story.append(
+        build_pdf_table(
+            cv_summary,
+            available_width=page_width,
+            max_rows=10,
+            decimals=4,
+            font_size=7.0,
+            header_font_size=7.2,
+        )
+    )
+    story.append(Spacer(1, 0.28 * cm))
     story.append(Paragraph("External test detailed results", styles["Heading2"]))
-    story.append(simple_pdf_table(external_results_df, max_rows=24))
+    story.append(Spacer(1, 0.15 * cm))
+    story.append(
+        build_pdf_table(
+            external_results_df,
+            available_width=page_width,
+            max_rows=25,
+            decimals=4,
+            font_size=6.4,
+            header_font_size=6.8,
+        )
+    )
+
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
 
-def create_package_zip(model_name: str, bundle_filename: str, bundle_bytes: bytes, py_filename: str, py_code: str, txt_filename: str, txt_code: str, extras: Dict[str, bytes]) -> bytes:
+def create_package_zip(
+    model_name: str,
+    bundle_filename: str,
+    bundle_bytes: bytes,
+    py_filename: str,
+    py_code: str,
+    txt_filename: str,
+    txt_code: str,
+    extras: Dict[str, bytes],
+) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(bundle_filename, bundle_bytes)
@@ -941,9 +1171,7 @@ def build_rejection_diagnostics(
     messages.append(
         f"Suspicious runs concentrate between {x_min:.6g} and {x_max:.6g} in the selected input range."
     )
-    messages.append(
-        f"The mean percent error of the suspicious subset is {map_error:.4f}%."
-    )
+    messages.append(f"The mean percent error of the suspicious subset is {map_error:.4f}%.")
 
     if x_mean <= np.nanpercentile(x_values, 35):
         messages.append("High-error runs are biased toward the lower input region; add Aspen points near the low-flow range.")
@@ -1110,7 +1338,7 @@ def module_database_analyzer():
                 st.session_state["input_column"] = input_selection
                 st.session_state["output_column"] = output_selection
                 st.session_state["analyzer_done"] = True
-                st.session_state["current_step"] = max(st.session_state["current_step"], 2)
+                st.session_state["current_step"] = 2
                 set_module_status("analyzer", "completed")
                 set_module_status("cleaning", "ready")
 
@@ -1132,6 +1360,7 @@ def module_database_analyzer():
                 add_log("analyzer", f"Input column confirmed: {input_selection}.")
                 add_log("analyzer", f"Output column confirmed: {output_selection}.")
                 add_log("analyzer", "Database Analyzer completed successfully.")
+                st.rerun()
             else:
                 set_module_status("analyzer", "ready")
                 add_log("analyzer", "Variable confirmation failed. Confirm both selections with Y before proceeding.")
@@ -1145,12 +1374,14 @@ def module_database_analyzer():
                 use_container_width=True,
             )
 
-    st.button(
-        "Proceed to Data Cleaning & Preparation",
-        disabled=not st.session_state["analyzer_done"],
-        use_container_width=True,
-        key="proceed_m1",
-    )
+        if st.button(
+            "Proceed to Data Cleaning & Preparation",
+            disabled=not st.session_state["analyzer_done"],
+            use_container_width=True,
+            key="proceed_m1",
+        ):
+            st.session_state["current_step"] = 2
+            st.rerun()
 
     render_log("analyzer", "analyzer_log_view")
 
@@ -1204,7 +1435,7 @@ def module_cleaning_preparation():
             st.session_state["train_val_df"] = train_val_df
             st.session_state["external_test_df"] = external_test_df
             st.session_state["cleaning_done"] = True
-            st.session_state["current_step"] = max(st.session_state["current_step"], 3)
+            st.session_state["current_step"] = 3
 
             st.session_state["artifacts"]["clean_data.xlsx"] = to_excel_bytes({"Clean Data": clean_df})
             st.session_state["artifacts"]["external_data_test.xlsx"] = to_excel_bytes({"External Data Test": external_test_df})
@@ -1215,6 +1446,7 @@ def module_cleaning_preparation():
 
             add_log("cleaning", f"Removed {removed} invalid, non-converged, or duplicated rows.")
             add_log("cleaning", f"Representative split created: {len(train_val_df)} rows for training-validation and {len(external_test_df)} rows for external test.")
+            st.rerun()
         except Exception as exc:
             set_module_status("cleaning", "error")
             add_log("cleaning", f"Data Cleaning & Preparation failed: {exc}")
@@ -1254,12 +1486,14 @@ def module_cleaning_preparation():
             use_container_width=True,
         )
 
-    st.button(
-        "Proceed to Training & Validation",
-        disabled=not st.session_state["cleaning_done"],
-        use_container_width=True,
-        key="proceed_m2",
-    )
+        if st.button(
+            "Proceed to Training & Validation",
+            disabled=not st.session_state["cleaning_done"],
+            use_container_width=True,
+            key="proceed_m2",
+        ):
+            st.session_state["current_step"] = 3
+            st.rerun()
 
     render_log("cleaning", "cleaning_log_view")
 
@@ -1404,11 +1638,12 @@ def module_training_validation():
                 st.session_state["artifacts"][name] = data
 
             st.session_state["training_done"] = True
-            st.session_state["current_step"] = max(st.session_state["current_step"], 4)
+            st.session_state["current_step"] = 4
             set_module_status("training", "completed")
             set_module_status("testing", "ready")
             add_log("training", "Final production model retrained on the full training-validation dataset.")
             add_log("training", "Training & Validation module completed successfully.")
+            st.rerun()
         except Exception as exc:
             set_module_status("training", "error")
             add_log("training", f"Training & Validation failed: {exc}")
@@ -1445,12 +1680,14 @@ def module_training_validation():
             use_container_width=True,
         )
 
-    st.button(
-        "Proceed to Test & Packing",
-        disabled=not st.session_state["training_done"],
-        use_container_width=True,
-        key="proceed_m3",
-    )
+        if st.button(
+            "Proceed to Test & Packing",
+            disabled=not st.session_state["training_done"],
+            use_container_width=True,
+            key="proceed_m3",
+        ):
+            st.session_state["current_step"] = 4
+            st.rerun()
 
     render_log("training", "training_log_view")
 
@@ -1595,6 +1832,7 @@ def module_test_packing():
             st.session_state["testing_done"] = True
             set_module_status("testing", "completed")
             add_log("testing", f"External test completed. RMSE={metrics['RMSE']:.6f}, MAE={metrics['MAE']:.6f}, R²={metrics['R2']:.6f}.")
+            st.rerun()
         except Exception as exc:
             set_module_status("testing", "error")
             add_log("testing", f"Test & Packing failed: {exc}")
@@ -1626,9 +1864,9 @@ def module_test_packing():
         )
 
         if "consolidated_model_report.pdf" in st.session_state["artifacts"]:
-            st.download_button(
-                "Download Consolidated Model Report (PDF)",
-                data=st.session_state["artifacts"]["consolidated_model_report.pdf"],
+            st.download_butfold_results.append({"Fold": fold_idx, **metrics})
+        fold_name = f""Fold": fold_idx, **metrics})
+        fold_name = f"ated_model_report.pdf"],
                 file_name="consolidated_model_report.pdf",
                 mime="application/pdf",
                 use_container_width=True,
@@ -1664,34 +1902,16 @@ def module_test_packing():
 
 def render_final_sidebar():
     with st.sidebar:
-        st.header("Final Download Center")
-
-        if not st.session_state["testing_done"]:
-            st.info("The final download panel will activate after Test & Packing is completed.")
-            if st.button("Restart Workflow", use_container_width=True):
-                reset_workflow()
+        st.header("Final Download Centerfold_results.append({"Fold": fold_idx, **metrics})
+        fold_name = f"cs})
+        fold_name = f"esults.append({"Fold": fold_idx, **metrics})
+        fold_name = f"o("Downloads will be listed here after external testing is completed.")
             return
-
-        st.write(f"**Model name:** {st.session_state['model_name']}")
-        st.write(f"**Input:** {st.session_state['input_column']}")
-        st.write(f"**Output:** {st.session_state['output_column']}")
-
-        if st.session_state["cv_summary"] is not None:
-            st.write("**Cross-validation summary**")
-            st.dataframe(st.session_state["cv_summary"], use_container_width=True, height=160)
-
-        if st.session_state["external_test_results"] is not None:
-            metrics = st.session_state["external_test_results"]["metrics"]
-            st.write("**External test metrics**")
-            st.write(f"RMSE: {metrics['RMSE']:.6f}")
-            st.write(f"MAE: {metrics['MAE']:.6f}")
-            st.write(f"R²: {metrics['R2']:.6f}")
 
         preferred_order = [
             "clean_data.xlsx",
             "external_data_test.xlsx",
             "data_training_validation_set.xlsx",
-            "database_inspection_summary.xlsx",
             "cv_results.xlsx",
             "model_parameters.xlsx",
             "training_validation_report.pdf",
@@ -1701,47 +1921,34 @@ def render_final_sidebar():
         ]
 
         for name in preferred_order:
-            if name not in st.session_state["artifacts"]:
-                continue
-            mime = "application/octet-stream"
-            if name.endswith(".pdf"):
-                mime = "application/pdf"
-            elif name.endswith(".xlsx"):
-                mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            elif name.endswith(".zip"):
-                mime = "application/zip"
-
-            st.download_button(
-                f"Download {name}",
-                data=st.session_state["artifacts"][name],
-                file_name=name,
-                mime=mime,
-                use_container_width=True,
-            )
-
-        safe_name = st.session_state["model_name"].replace(" ", "_")
-        for name in [f"{safe_name}.joblib", f"{safe_name}.py", f"{safe_name}.txt"]:
             if name in st.session_state["artifacts"]:
+                mime = "application/octet-stream"
+                if name.endswith(".xlsx"):
+                    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                elif name.endswith(".pdf"):
+                    mime = "application/pdf"
+                elif name.endswith(".zip"):
+                    mime = "application/zip"
+                elif name.endswith(".png"):
+                    mime = "image/png"
+                elif name.endswith(".joblib"):
+                    mime = "application/octet-stream"
+                elif name.endswith(".py") or name.endswith(".txt"):
+                    mime = "text/plain"
+
                 st.download_button(
                     f"Download {name}",
                     data=st.session_state["artifacts"][name],
                     file_name=name,
-                    mime="application/octet-stream",
+                    mime=mime,
                     use_container_width=True,
-                )
-
-        if st.button("Restart Workflow", use_container_width=True):
-            reset_workflow()
-
-
-def main():
-    st.set_page_config(page_title=APP_TITLE, layout="wide")
+                    key=f"sidfold_results.append({"Fold": fold_idx, **metrics})
+        fold_name = f"_title=APP_TITLE, layout="wide")
     init_state()
     inject_styles()
 
     if not st.session_state["app_initialized"]:
         intro_dialog()
-        st.stop()
 
     render_header()
     render_final_sidebar()
@@ -1757,13 +1964,10 @@ def main():
 
     with tabs[0]:
         module_database_analyzer()
-
     with tabs[1]:
         module_cleaning_preparation()
-
     with tabs[2]:
         module_training_validation()
-
     with tabs[3]:
         module_test_packing()
 
