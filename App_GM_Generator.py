@@ -651,8 +651,8 @@ def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
     x = np.arange(len(metrics_df))
     width = 0.34
 
-    ax1.bar(x - width / 2, metrics_df["RMSE"], width=0.10, color="0.20", label="RMSE")
-    ax1.bar(x + width / 2, metrics_df["MAE"], width=0.10, color="0.65", label="MAE")
+    ax1.bar(x - width / 2, metrics_df["RMSE"], width=0.20, color="0.20", label="RMSE")
+    ax1.bar(x + width / 2, metrics_df["MAE"], width=0.20, color="0.65", label="MAE")
     ax1.set_xlabel("Fold", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax1.set_ylabel("Error magnitude", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax1.set_xticks(x)
