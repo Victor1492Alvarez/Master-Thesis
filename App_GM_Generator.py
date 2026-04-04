@@ -981,36 +981,22 @@ def build_training_pdf(
     summary_table = simple_table_from_df(
         chosen_cv["summary_df"],
         max_rows=10,
-        available_width=8.2 * cm,
+        available_width=page_width,
         decimals=4,
         font_size=7.1,
         header_font_size=7.3,
     )
+
     cv_chart = Image(
         io.BytesIO(chosen_cv["cv_metrics_plot"]),
-        width=page_width - 9.0 * cm,
+        width=page_width,
         height=PDF_SETTINGS["training_cv_chart_height_cm"] * cm,
     )
     cv_chart.hAlign = "CENTER"
 
-    first_page_layout = Table(
-        [[summary_table, cv_chart]],
-        colWidths=[8.6 * cm, page_width - 8.6 * cm],
-        hAlign="CENTER",
-    )
-    first_page_layout.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-            ]
-        )
-    )
-
-    story.append(first_page_layout)
+    story.append(summary_table)
+    story.append(Spacer(1, PDF_SETTINGS["table_chart_gap_cm"] * cm))
+    story.append(cv_chart)
     story.append(PageBreak())
 
     for fold_name, df_fold in chosen_cv["fold_tables"].items():
@@ -1069,7 +1055,6 @@ def build_training_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
-
 
 def build_consolidated_pdf(
     model_name: str,
