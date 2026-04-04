@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -31,6 +31,39 @@ from sklearn.preprocessing import StandardScaler
 APP_TITLE = "Gaussian Model Generator"
 APP_SUBTITLE = "PtMeOH Gaussian surrogate modeling from Aspen Plus Excel data"
 RANDOM_STATE = 42
+
+# ------------------------------------------------------------------
+# CENTRAL SETTINGS
+# Ajusta aquí la relación de aspecto de los gráficos y las fuentes.
+# ------------------------------------------------------------------
+PLOT_SETTINGS = {
+    "prediction_figsize": (8.8, 5.0),
+    "percent_error_figsize": (12.0, 3.6),
+    "cv_figsize": (8.8, 5.0),
+    "external_comparison_figsize": (8.8, 5.0),
+    "external_error_figsize": (12.0, 3.6),
+    "title_fontsize": 10,
+    "axis_label_fontsize": 9,
+    "tick_x_fontsize": 7,
+    "tick_y_fontsize": 8,
+    "legend_fontsize": 8,
+}
+
+PDF_SETTINGS = {
+    "pagesize": landscape(A4),
+    "left_margin_cm": 1.2,
+    "right_margin_cm": 1.2,
+    "top_margin_cm": 1.1,
+    "bottom_margin_cm": 1.1,
+    "section_gap_cm": 0.35,
+    "small_gap_cm": 0.18,
+    "table_chart_gap_cm": 0.75,
+    "training_cv_chart_height_cm": 9.0,
+    "training_prediction_chart_height_cm": 7.9,
+    "training_error_chart_height_cm": 5.8,
+    "consolidated_main_chart_height_cm": 8.8,
+    "consolidated_error_chart_height_cm": 6.0,
+}
 
 plt.rcParams.update(
     {
@@ -572,7 +605,8 @@ def create_prediction_plot(
     uncertainty_col: Optional[str] = None,
 ) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.2, 4.3))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["prediction_figsize"])
+
     ax.scatter(ordered[input_col], ordered[output_col], color="black", s=28, label="Aspen")
     ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.8, label="Gaussian model")
 
@@ -581,64 +615,69 @@ def create_prediction_plot(
         upper = ordered["Prediction"] + 1.96 * ordered[uncertainty_col]
         ax.fill_between(ordered[input_col], lower, upper, color="0.82", alpha=1.0, label="95% interval")
 
-    ax.set_title(title)
-    ax.set_xlabel(input_col)
-    ax.set_ylabel(output_col)
+    ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax.grid(True, color="0.88", linewidth=0.8)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, fontsize=PLOT_SETTINGS["legend_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.2, 3.3))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["percent_error_figsize"])
 
     x = np.arange(len(ordered))
     ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.5)
 
-    ax.set_title(title)
-    ax.set_xlabel(input_col)
-    ax.set_ylabel("Percent Error [%]")
+    ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel("Percent Error [%]", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_xticks(x)
     ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
-    ax.tick_params(axis="x", labelsize=6)
-    ax.tick_params(axis="y", labelsize=8)
+    ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_x_fontsize"])
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax.grid(True, axis="y", color="0.85", linewidth=0.8)
     ax.margins(x=0.01)
     fig.tight_layout()
-
     return fig_to_png_bytes(fig)
 
 
 def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
-    fig, ax1 = plt.subplots(figsize=(8.2, 4.4))
+    fig, ax1 = plt.subplots(figsize=PLOT_SETTINGS["cv_figsize"])
     x = np.arange(len(metrics_df))
     width = 0.34
 
     ax1.bar(x - width / 2, metrics_df["RMSE"], width=width, color="0.20", label="RMSE")
     ax1.bar(x + width / 2, metrics_df["MAE"], width=width, color="0.65", label="MAE")
-    ax1.set_xlabel("Fold")
-    ax1.set_ylabel("Error magnitude")
+    ax1.set_xlabel("Fold", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax1.set_ylabel("Error magnitude", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax1.set_xticks(x)
     ax1.set_xticklabels(metrics_df["Fold"].astype(str))
+    ax1.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax1.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax1.grid(True, axis="y", color="0.88", linewidth=0.8)
 
     ax2 = ax1.twinx()
     ax2.plot(x, metrics_df["R2"], color="black", linewidth=1.8, marker="o", label="R²")
-    ax2.set_ylabel("R²")
+    ax2.set_ylabel("R²", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax2.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, frameon=False, loc="upper right")
-    ax1.set_title("5-Fold Cross-Validation Metrics")
+    ax1.legend(lines1 + lines2, labels1 + labels2, frameon=False, loc="upper right", fontsize=PLOT_SETTINGS["legend_fontsize"])
+    ax1.set_title("5-Fold Cross-Validation Metrics", fontsize=PLOT_SETTINGS["title_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, output_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.4, 4.6))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_comparison_figsize"])
+
     ax.scatter(ordered[input_col], ordered[output_col], color="black", s=30, label="Aspen points")
     ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=2.0, label="Gaussian model")
     ax.fill_between(
@@ -648,28 +687,32 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         color="0.85",
         label="95% interval",
     )
-    ax.set_title("External Test: Gaussian Model vs Aspen Data")
-    ax.set_xlabel(input_col)
-    ax.set_ylabel(output_col)
+    ax.set_title("External Test: Gaussian Model vs Aspen Data", fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax.grid(True, color="0.88", linewidth=0.8)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, fontsize=PLOT_SETTINGS["legend_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_external_error_plot(df_plot: pd.DataFrame, input_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.2, 3.3))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_error_figsize"])
+
     x = np.arange(len(ordered))
-    ax.bar(x, ordered["Absolute Error"], color="0.4", edgecolor="black", linewidth=0.5)
+    ax.bar(x, ordered["Percent Error"], color="0.4", edgecolor="black", linewidth=0.5)
     ax.set_xticks(x)
     ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
-    ax.tick_params(axis="x", labelsize=6)
-    ax.tick_params(axis="y", labelsize=8)
-    ax.set_title("External Test Absolute Error by Run")
-    ax.set_xlabel(input_col)
-    ax.set_ylabel("Absolute Error")
+    ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_x_fontsize"])
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.set_title("External Test: Percent Error by Run", fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel("Percent Error [%]", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.grid(True, axis="y", color="0.88", linewidth=0.8)
+    ax.margins(x=0.01)
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
@@ -878,6 +921,17 @@ def build_text_summary(
     return "\n".join(lines)
 
 
+def _pdf_doc() -> SimpleDocTemplate:
+    return SimpleDocTemplate(
+        io.BytesIO(),
+        pagesize=PDF_SETTINGS["pagesize"],
+        rightMargin=PDF_SETTINGS["right_margin_cm"] * cm,
+        leftMargin=PDF_SETTINGS["left_margin_cm"] * cm,
+        topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
+        bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
+    )
+
+
 def build_training_pdf(
     model_name: str,
     input_col: str,
@@ -888,24 +942,24 @@ def build_training_pdf(
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        rightMargin=1.4 * cm,
-        leftMargin=1.4 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        pagesize=PDF_SETTINGS["pagesize"],
+        rightMargin=PDF_SETTINGS["right_margin_cm"] * cm,
+        leftMargin=PDF_SETTINGS["left_margin_cm"] * cm,
+        topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
+        bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
     )
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.7, leading=10.5, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.8, leading=10.8, alignment=TA_LEFT))
     story = []
     page_width = doc.width
 
     story.append(Paragraph("Training & Validation Report", styles["Title"]))
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.30 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
-    story.append(Spacer(1, 0.30 * cm))
+    story.append(Spacer(1, 0.25 * cm))
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
@@ -919,24 +973,44 @@ def build_training_pdf(
                 header_font_size=6.9,
             )
         )
-        story.append(Spacer(1, 0.30 * cm))
+        story.append(Spacer(1, PDF_SETTINGS["section_gap_cm"] * cm))
 
-    story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
-    story.append(
-        simple_table_from_df(
-            chosen_cv["summary_df"],
-            max_rows=10,
-            available_width=page_width,
-            decimals=4,
-            font_size=6.8,
-            header_font_size=7.0,
+    story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
+    story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
+
+    summary_table = simple_table_from_df(
+        chosen_cv["summary_df"],
+        max_rows=10,
+        available_width=8.2 * cm,
+        decimals=4,
+        font_size=7.1,
+        header_font_size=7.3,
+    )
+    cv_chart = Image(
+        io.BytesIO(chosen_cv["cv_metrics_plot"]),
+        width=page_width - 9.0 * cm,
+        height=PDF_SETTINGS["training_cv_chart_height_cm"] * cm,
+    )
+    cv_chart.hAlign = "CENTER"
+
+    first_page_layout = Table(
+        [[summary_table, cv_chart]],
+        colWidths=[8.6 * cm, page_width - 8.6 * cm],
+        hAlign="CENTER",
+    )
+    first_page_layout.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
         )
     )
-    story.append(Spacer(1, 0.25 * cm))
 
-    cv_chart = Image(io.BytesIO(chosen_cv["cv_metrics_plot"]), width=page_width, height=7.5 * cm)
-    cv_chart.hAlign = "CENTER"
-    story.append(cv_chart)
+    story.append(first_page_layout)
     story.append(PageBreak())
 
     for fold_name, df_fold in chosen_cv["fold_tables"].items():
@@ -955,16 +1029,24 @@ def build_training_pdf(
                 header_font_size=6.3,
             )
         )
-        story.append(Spacer(1, 0.22 * cm))
+        story.append(Spacer(1, 0.28 * cm))
 
-        pred_chart = Image(io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]), width=page_width, height=7.1 * cm)
+        pred_chart = Image(
+            io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]),
+            width=page_width,
+            height=PDF_SETTINGS["training_prediction_chart_height_cm"] * cm,
+        )
         pred_chart.hAlign = "CENTER"
         story.append(pred_chart)
         story.append(PageBreak())
 
         story.append(Paragraph(f"{fold_name.replace('_', ' ')} - Percent Error", styles["Heading2"]))
-        story.append(Spacer(1, 0.30 * cm))
-        err_chart = Image(io.BytesIO(chosen_cv["fold_error_plots"][error_key]), width=page_width, height=5.2 * cm)
+        story.append(Spacer(1, 0.22 * cm))
+        err_chart = Image(
+            io.BytesIO(chosen_cv["fold_error_plots"][error_key]),
+            width=page_width,
+            height=PDF_SETTINGS["training_error_chart_height_cm"] * cm,
+        )
         err_chart.hAlign = "CENTER"
         story.append(err_chart)
         story.append(PageBreak())
@@ -997,18 +1079,19 @@ def build_consolidated_pdf(
     external_results_df: pd.DataFrame,
     external_metrics: Dict[str, float],
     external_plot_bytes: bytes,
+    external_error_plot_bytes: bytes,
 ) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        rightMargin=1.4 * cm,
-        leftMargin=1.4 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        pagesize=PDF_SETTINGS["pagesize"],
+        rightMargin=PDF_SETTINGS["right_margin_cm"] * cm,
+        leftMargin=PDF_SETTINGS["left_margin_cm"] * cm,
+        topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
+        bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
     )
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.7, leading=10.5, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.8, leading=10.8, alignment=TA_LEFT))
     story = []
     page_width = doc.width
 
@@ -1025,29 +1108,59 @@ def build_consolidated_pdf(
     )
 
     story.append(Paragraph("Consolidated Model Report", styles["Title"]))
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.30 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
-    story.append(Spacer(1, 0.30 * cm))
+    story.append(Spacer(1, 0.25 * cm))
+    story.append(Paragraph("External test metrics and comparison chart", styles["Heading2"]))
+    story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
 
-    story.append(Paragraph("External test metrics", styles["Heading2"]))
-    story.append(
-        simple_table_from_df(
-            metrics_df,
-            max_rows=10,
-            available_width=page_width,
-            decimals=4,
-            font_size=6.8,
-            header_font_size=7.0,
+    metrics_table = simple_table_from_df(
+        metrics_df,
+        max_rows=10,
+        available_width=8.0 * cm,
+        decimals=4,
+        font_size=7.0,
+        header_font_size=7.2,
+    )
+    ext_chart = Image(
+        io.BytesIO(external_plot_bytes),
+        width=page_width - 8.8 * cm,
+        height=PDF_SETTINGS["consolidated_main_chart_height_cm"] * cm,
+    )
+    ext_chart.hAlign = "CENTER"
+
+    top_layout = Table(
+        [[metrics_table, ext_chart]],
+        colWidths=[8.4 * cm, page_width - 8.4 * cm],
+        hAlign="CENTER",
+    )
+    top_layout.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
         )
     )
-    story.append(Spacer(1, 0.25 * cm))
 
-    ext_chart = Image(io.BytesIO(external_plot_bytes), width=page_width, height=7.6 * cm)
-    ext_chart.hAlign = "CENTER"
-    story.append(ext_chart)
+    story.append(top_layout)
     story.append(PageBreak())
+
+    story.append(Paragraph("External test percent error", styles["Heading2"]))
+    story.append(Spacer(1, 0.18 * cm))
+    err_chart = Image(
+        io.BytesIO(external_error_plot_bytes),
+        width=page_width,
+        height=PDF_SETTINGS["consolidated_error_chart_height_cm"] * cm,
+    )
+    err_chart.hAlign = "CENTER"
+    story.append(err_chart)
+    story.append(Spacer(1, 0.35 * cm))
 
     story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
     story.append(Spacer(1, 0.15 * cm))
@@ -1061,7 +1174,7 @@ def build_consolidated_pdf(
             header_font_size=7.0,
         )
     )
-    story.append(Spacer(1, 0.25 * cm))
+    story.append(Spacer(1, 0.30 * cm))
 
     story.append(Paragraph("External test detailed results", styles["Heading2"]))
     story.append(Spacer(1, 0.15 * cm))
@@ -1728,6 +1841,7 @@ def module_test_packing():
                     results_df,
                     metrics,
                     external_plot,
+                    external_error_plot,
                 )
 
             decision = parse_yes_no(satisfaction)
@@ -1756,6 +1870,8 @@ def module_test_packing():
                     "cv_results.xlsx": st.session_state["artifacts"]["cv_results.xlsx"],
                     "training_validation_report.pdf": st.session_state["artifacts"]["training_validation_report.pdf"],
                     "external_test_results.xlsx": st.session_state["artifacts"]["external_test_results.xlsx"],
+                    "external_test_plot.png": st.session_state["artifacts"]["external_test_plot.png"],
+                    "external_test_error_plot.png": st.session_state["artifacts"]["external_test_error_plot.png"],
                 }
                 if "consolidated_model_report.pdf" in st.session_state["artifacts"]:
                     extras["consolidated_model_report.pdf"] = st.session_state["artifacts"]["consolidated_model_report.pdf"]
@@ -1797,7 +1913,7 @@ def module_test_packing():
         c3.metric("R²", f"{metrics['R2']:.6f}")
 
         st.image(st.session_state["artifacts"]["external_test_plot.png"], caption="External test comparison")
-        st.image(st.session_state["artifacts"]["external_test_error_plot.png"], caption="External test absolute error")
+        st.image(st.session_state["artifacts"]["external_test_error_plot.png"], caption="External test percent error")
 
         st.write("Comparison table")
         st.dataframe(results_pack["comparison_df"], use_container_width=True)
@@ -1927,7 +2043,6 @@ def main():
         module_training_validation()
     with tabs[3]:
         module_test_packing()
-
 
 if __name__ == "__main__":
     main()
