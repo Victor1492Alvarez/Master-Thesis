@@ -59,7 +59,7 @@ PDF_SETTINGS = {
     "training_prediction_chart_height_cm": 9.0,
     "training_error_chart_height_cm": 8.0,
     "consolidated_main_chart_height_cm": 8.7,
-    "consolidated_error_chart_height_cm": 8.0,
+    "consolidated_error_chart_height_cm": 9.0,
 }
 
 plt.rcParams.update(
