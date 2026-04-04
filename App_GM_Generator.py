@@ -57,7 +57,7 @@ PDF_SETTINGS = {
     "bottom_margin_cm": 1.1,
     "section_gap_cm": 3.0,
     "small_gap_cm": 3.0,
-    "table_chart_gap_cm": 3.0,
+    "table_chart_gap_cm": 1.5,
     "training_cv_chart_height_cm": 12.0,
     "training_prediction_chart_height_cm": 10.0,
     "training_error_chart_height_cm": 8.0,
