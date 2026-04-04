@@ -44,7 +44,7 @@ PLOT_SETTINGS = {
     "external_error_figsize": (12.0, 5.0),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
-    "tick_x_fontsize": 6,
+    "tick_x_fontsize": 5.0,
     "tick_y_fontsize": 10,
     "legend_fontsize": 10,
 }
@@ -55,7 +55,7 @@ PDF_SETTINGS = {
     "right_margin_cm": 1.2,
     "top_margin_cm": 1.1,
     "bottom_margin_cm": 1.1,
-    "section_gap_cm": 4.0,
+    "section_gap_cm": 1.0,
     "small_gap_cm": 0.18,
     "table_chart_gap_cm": 3.0,
     "training_cv_chart_height_cm": 9.0,
@@ -631,7 +631,7 @@ def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> byte
     fig, ax = plt.subplots(figsize=PLOT_SETTINGS["percent_error_figsize"])
 
     x = np.arange(len(ordered))
-    ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.5)
+    ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.3)
 
     ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
     ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
@@ -651,8 +651,8 @@ def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
     x = np.arange(len(metrics_df))
     width = 0.34
 
-    ax1.bar(x - width / 2, metrics_df["RMSE"], width=width, color="0.20", label="RMSE")
-    ax1.bar(x + width / 2, metrics_df["MAE"], width=width, color="0.65", label="MAE")
+    ax1.bar(x - width / 2, metrics_df["RMSE"], width=0.25, color="0.20", label="RMSE")
+    ax1.bar(x + width / 2, metrics_df["MAE"], width=0.25, color="0.65", label="MAE")
     ax1.set_xlabel("Fold", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax1.set_ylabel("Error magnitude", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax1.set_xticks(x)
