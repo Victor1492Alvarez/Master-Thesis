@@ -1064,7 +1064,6 @@ def build_consolidated_pdf(
     external_results_df: pd.DataFrame,
     external_metrics: Dict[str, float],
     external_plot_bytes: bytes,
-    external_error_plot_bytes: bytes,
 ) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -1075,8 +1074,18 @@ def build_consolidated_pdf(
         topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
         bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
     )
+
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.8, leading=10.8, alignment=TA_LEFT))
+    styles.add(
+        ParagraphStyle(
+            name="Meta",
+            fontName="Helvetica",
+            fontSize=8.8,
+            leading=10.8,
+            alignment=TA_LEFT,
+        )
+    )
+
     story = []
     page_width = doc.width
 
@@ -1087,7 +1096,9 @@ def build_consolidated_pdf(
                 external_metrics["RMSE"],
                 external_metrics["MAE"],
                 external_metrics["R2"],
-                float(np.nanmean(external_results_df["Percent Error"])) if "Percent Error" in external_results_df.columns else np.nan,
+                float(np.nanmean(external_results_df["Percent Error"]))
+                if "Percent Error" in external_results_df.columns
+                else np.nan,
             ],
         }
     )
@@ -1098,54 +1109,30 @@ def build_consolidated_pdf(
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Spacer(1, 0.25 * cm))
+
     story.append(Paragraph("External test metrics and comparison chart", styles["Heading2"]))
     story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
 
     metrics_table = simple_table_from_df(
         metrics_df,
         max_rows=10,
-        available_width=8.0 * cm,
+        available_width=page_width,
         decimals=4,
-        font_size=7.0,
-        header_font_size=7.2,
+        font_size=7.1,
+        header_font_size=7.3,
     )
+
     ext_chart = Image(
         io.BytesIO(external_plot_bytes),
-        width=page_width - 8.8 * cm,
+        width=page_width,
         height=PDF_SETTINGS["consolidated_main_chart_height_cm"] * cm,
     )
     ext_chart.hAlign = "CENTER"
 
-    top_layout = Table(
-        [[metrics_table, ext_chart]],
-        colWidths=[8.4 * cm, page_width - 8.4 * cm],
-        hAlign="CENTER",
-    )
-    top_layout.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-            ]
-        )
-    )
-
-    story.append(top_layout)
+    story.append(metrics_table)
+    story.append(Spacer(1, PDF_SETTINGS["table_chart_gap_cm"] * cm))
+    story.append(ext_chart)
     story.append(PageBreak())
-
-    story.append(Paragraph("External test percent error", styles["Heading2"]))
-    story.append(Spacer(1, 0.18 * cm))
-    err_chart = Image(
-        io.BytesIO(external_error_plot_bytes),
-        width=page_width,
-        height=PDF_SETTINGS["consolidated_error_chart_height_cm"] * cm,
-    )
-    err_chart.hAlign = "CENTER"
-    story.append(err_chart)
-    story.append(Spacer(1, 0.35 * cm))
 
     story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
     story.append(Spacer(1, 0.15 * cm))
@@ -1159,7 +1146,7 @@ def build_consolidated_pdf(
             header_font_size=7.0,
         )
     )
-    story.append(Spacer(1, 0.30 * cm))
+    story.append(Spacer(1, PDF_SETTINGS["section_gap_cm"] * cm))
 
     story.append(Paragraph("External test detailed results", styles["Heading2"]))
     story.append(Spacer(1, 0.15 * cm))
@@ -1177,7 +1164,6 @@ def build_consolidated_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
-
 
 def create_package_zip(
     model_name: str,
