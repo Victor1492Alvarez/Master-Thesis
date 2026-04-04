@@ -32,38 +32,36 @@ APP_TITLE = "Gaussian Model Generator"
 APP_SUBTITLE = "PtMeOH Gaussian surrogate modeling from Aspen Plus Excel data"
 RANDOM_STATE = 42
 
-# ------------------------------------------------------------------
-# CENTRAL SETTINGS
-# Ajusta aquí la relación de aspecto de los gráficos y las fuentes.
-# ------------------------------------------------------------------
 PLOT_SETTINGS = {
-    "prediction_figsize": (10,8.0),
-    "percent_error_figsize": (12.0, 7.0),
+    "prediction_figsize": (10.6, 6.4),
+    "percent_error_figsize": (12.0, 3.8),
     "cv_figsize": (8.8, 5.0),
     "external_comparison_figsize": (8.8, 5.0),
-    "external_error_figsize": (12.0, 7.0),
+    "external_error_figsize": (12.0, 3.8),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
     "tick_x_fontsize": 5.0,
     "tick_y_fontsize": 10,
     "legend_fontsize": 10,
 }
+
 PDF_SETTINGS = {
-    "pagesize": A4,
-    "left_margin_cm": 1.0,
-    "right_margin_cm": 1.0,
-    "top_margin_cm": 1.0,
-    "bottom_margin_cm": 1.0,
+    "pagesize": landscape(A4),
+    "left_margin_cm": 1.2,
+    "right_margin_cm": 1.2,
+    "top_margin_cm": 1.1,
+    "bottom_margin_cm": 1.1,
     "section_gap_cm": 0.35,
     "small_gap_cm": 0.18,
     "table_chart_gap_cm": 0.22,
-    "first_page_table_width_cm": 8.4,
-    "training_cv_chart_height_cm": 8.7,
-    "training_prediction_chart_height_cm": 7.9,
-    "training_error_chart_height_cm": 5.7,
-    "consolidated_main_chart_height_cm": 8.5,
-    "consolidated_error_chart_height_cm": 5.6,
+    "first_page_table_width_cm": 8.5,
+    "training_cv_chart_height_cm": 9.0,
+    "training_prediction_chart_height_cm": 7.8,
+    "training_error_chart_height_cm": 5.8,
+    "consolidated_main_chart_height_cm": 8.7,
+    "consolidated_error_chart_height_cm": 5.8,
 }
+
 plt.rcParams.update(
     {
         "font.family": "DejaVu Sans",
@@ -617,6 +615,7 @@ def simple_table_from_df(
     )
     return table
 
+
 def create_prediction_plot(
     df_plot: pd.DataFrame,
     input_col: str,
@@ -648,7 +647,7 @@ def create_prediction_plot(
 
 def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.8, 3.8))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["percent_error_figsize"])
 
     x = np.arange(len(ordered))
     ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.35)
@@ -664,6 +663,7 @@ def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> byte
     ax.margins(x=0.01)
     fig.tight_layout()
     return fig_to_png_bytes(fig)
+
 
 def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
     fig, ax1 = plt.subplots(figsize=PLOT_SETTINGS["cv_figsize"])
@@ -719,7 +719,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
 
 def create_external_error_plot(df_plot: pd.DataFrame, input_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.8, 3.8))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_error_figsize"])
 
     x = np.arange(len(ordered))
     ax.bar(x, ordered["Percent Error"], color="0.4", edgecolor="black", linewidth=0.4)
@@ -940,17 +940,6 @@ def build_text_summary(
     return "\n".join(lines)
 
 
-def _pdf_doc() -> SimpleDocTemplate:
-    return SimpleDocTemplate(
-        io.BytesIO(),
-        pagesize=PDF_SETTINGS["pagesize"],
-        rightMargin=PDF_SETTINGS["right_margin_cm"] * cm,
-        leftMargin=PDF_SETTINGS["left_margin_cm"] * cm,
-        topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
-        bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
-    )
-
-
 def build_training_pdf(
     model_name: str,
     input_col: str,
@@ -974,15 +963,15 @@ def build_training_pdf(
     story = []
     page_width = doc.width
     first_page_table_width = PDF_SETTINGS["first_page_table_width_cm"] * cm
-    first_page_chart_width = page_width - first_page_table_width - (0.25 * cm)
+    first_page_chart_width = page_width - first_page_table_width - (0.35 * cm)
 
     story.append(Paragraph("Training & Validation Report", styles["Title"]))
-    story.append(Spacer(1, 0.18 * cm))
+    story.append(Spacer(1, 0.22 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
-    story.append(Spacer(1, 0.18 * cm))
+    story.append(Spacer(1, 0.22 * cm))
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
@@ -1026,8 +1015,8 @@ def build_training_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]
@@ -1053,7 +1042,7 @@ def build_training_pdf(
                 header_font_size=6.2,
             )
         )
-        story.append(Spacer(1, 0.18 * cm))
+        story.append(Spacer(1, 0.20 * cm))
 
         pred_chart = Image(
             io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]),
@@ -1062,7 +1051,7 @@ def build_training_pdf(
         )
         pred_chart.hAlign = "CENTER"
         story.append(pred_chart)
-        story.append(Spacer(1, 0.16 * cm))
+        story.append(Spacer(1, 0.18 * cm))
 
         err_chart = Image(
             io.BytesIO(chosen_cv["fold_error_plots"][error_key]),
@@ -1091,7 +1080,8 @@ def build_training_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
-    
+
+
 def build_consolidated_pdf(
     model_name: str,
     input_col: str,
@@ -1126,7 +1116,7 @@ def build_consolidated_pdf(
     story = []
     page_width = doc.width
     first_page_table_width = PDF_SETTINGS["first_page_table_width_cm"] * cm
-    first_page_chart_width = page_width - first_page_table_width - (0.25 * cm)
+    first_page_chart_width = page_width - first_page_table_width - (0.35 * cm)
 
     metrics_df = pd.DataFrame(
         {
@@ -1143,11 +1133,11 @@ def build_consolidated_pdf(
     )
 
     story.append(Paragraph("Consolidated Model Report", styles["Title"]))
-    story.append(Spacer(1, 0.18 * cm))
+    story.append(Spacer(1, 0.22 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
-    story.append(Spacer(1, 0.18 * cm))
+    story.append(Spacer(1, 0.22 * cm))
 
     story.append(Paragraph("External test metrics and comparison chart", styles["Heading2"]))
     story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
@@ -1177,8 +1167,8 @@ def build_consolidated_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
                 ("TOPPADDING", (0, 0), (-1, -1), 0),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]
@@ -1229,7 +1219,8 @@ def build_consolidated_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
-    
+
+
 def create_package_zip(
     model_name: str,
     bundle_filename: str,
@@ -2079,6 +2070,7 @@ def main():
         module_training_validation()
     with tabs[3]:
         module_test_packing()
+
 
 if __name__ == "__main__":
     main()
