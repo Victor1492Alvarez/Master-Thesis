@@ -49,7 +49,7 @@ PLOT_SETTINGS = {
     "legend_fontsize": 10,
 }
 PDF_SETTINGS = {
-    "pagesize": landscape(A4),
+    "pagesize": A4,
     "left_margin_cm": 1.0,
     "right_margin_cm": 1.0,
     "top_margin_cm": 1.0,
