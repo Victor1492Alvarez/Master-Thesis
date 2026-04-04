@@ -678,8 +678,8 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
     fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_comparison_figsize"])
 
-    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=20, label="Aspen points")
-    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=2.0, label="Gaussian model")
+    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=15, label="Aspen points")
+    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.5, label="Gaussian model")
     ax.fill_between(
         ordered[input_col],
         ordered["Prediction"] - 1.96 * ordered["Predictive Std"],
