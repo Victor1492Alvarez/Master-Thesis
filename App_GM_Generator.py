@@ -38,13 +38,13 @@ RANDOM_STATE = 42
 # ------------------------------------------------------------------
 PLOT_SETTINGS = {
     "prediction_figsize": (8.8, 8.8),
-    "percent_error_figsize": (12.0, 3.6),
+    "percent_error_figsize": (12.0, 5),
     "cv_figsize": (8.8, 5.0),
     "external_comparison_figsize": (8.8, 5.0),
-    "external_error_figsize": (12.0, 3.6),
+    "external_error_figsize": (12.0, 5.0),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
-    "tick_x_fontsize": 7,
+    "tick_x_fontsize": 6,
     "tick_y_fontsize": 8,
     "legend_fontsize": 8,
 }
