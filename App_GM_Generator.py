@@ -37,7 +37,7 @@ PLOT_SETTINGS = {
     "percent_error_figsize": (12.0, 6),
     "cv_figsize": (8.8, 5.0),
     "external_comparison_figsize": (8.8, 5.0),
-    "external_error_figsize": (12.0, 6),
+    "external_error_figsize": (12.0, 8.5),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
     "tick_x_fontsize": 5.0,
@@ -971,7 +971,7 @@ def build_training_pdf(
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
-    story.append(Spacer(1, 2 * cm))
+    story.append(Spacer(1, 1* cm))
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
@@ -986,7 +986,7 @@ def build_training_pdf(
             )
         )
         story.append(Spacer(1, PDF_SETTINGS["section_gap_cm"] * cm))
-    story.append(Spacer(1, 2 * cm))
+    story.append(Spacer(1, 1 * cm))
     story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
     story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
 
