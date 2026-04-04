@@ -34,10 +34,10 @@ RANDOM_STATE = 42
 
 PLOT_SETTINGS = {
     "prediction_figsize": (10.6, 6.4),
-    "percent_error_figsize": (12.0, 3.8),
+    "percent_error_figsize": (12.0, 6),
     "cv_figsize": (8.8, 5.0),
     "external_comparison_figsize": (8.8, 5.0),
-    "external_error_figsize": (12.0, 3.8),
+    "external_error_figsize": (12.0, 6),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
     "tick_x_fontsize": 5.0,
@@ -46,14 +46,14 @@ PLOT_SETTINGS = {
 }
 
 PDF_SETTINGS = {
-    "pagesize": landscape(A4),
+    "pagesize": A4,
     "left_margin_cm": 1.2,
     "right_margin_cm": 1.2,
     "top_margin_cm": 1.1,
     "bottom_margin_cm": 1.1,
     "section_gap_cm": 0.35,
-    "small_gap_cm": 0.18,
-    "table_chart_gap_cm": 0.22,
+    "small_gap_cm": 1,
+    "table_chart_gap_cm": 2,
     "first_page_table_width_cm": 8.5,
     "training_cv_chart_height_cm": 9.0,
     "training_prediction_chart_height_cm": 7.8,
