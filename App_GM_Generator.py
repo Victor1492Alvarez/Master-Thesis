@@ -68,7 +68,7 @@ PDF_SETTINGS = {
     "first_page_table_width_cm": 4.0,
     "training_cv_chart_height_cm": 8.5,
     "training_prediction_chart_height_cm": 14.0,
-    "training_error_chart_height_cm": 9.0,
+    "training_error_chart_height_cm": 12.0,
     "consolidated_main_chart_height_cm": 8.0,
     "consolidated_error_chart_height_cm": 13.5,
 }
@@ -880,8 +880,8 @@ def create_prediction_plot(
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
     fig, ax = plt.subplots(figsize=PLOT_SETTINGS["prediction_figsize"])
 
-    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=28, label="Aspen")
-    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.8, label="Gaussian model")
+    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=28, label="Aspen simulation")
+    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.8, label="Gaussian model estimation")
 
     if uncertainty_col and uncertainty_col in ordered.columns:
         lower = ordered["Prediction"] - 1.96 * ordered[uncertainty_col]
@@ -893,7 +893,7 @@ def create_prediction_plot(
     ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
-    ax.grid(True, color="0.88", linewidth=0.8)
+    ax.grid(True, color="0.88", linewidth=0.10)
     ax.legend(frameon=False, fontsize=PLOT_SETTINGS["legend_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
@@ -907,7 +907,7 @@ def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> byte
     ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.35)
 
     ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
-    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"],decimals="2")
     ax.set_ylabel("Percent Error [%]", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_xticks(x)
     ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
