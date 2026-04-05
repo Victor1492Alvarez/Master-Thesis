@@ -43,12 +43,26 @@ APP_TITLE = "Gaussian Model Generator"
 APP_SUBTITLE = "PtMeOH Gaussian surrogate modeling from Aspen Plus Excel data"
 RANDOM_STATE = 42
 
+TAB_LABELS = [
+    "1. Database Analyzer",
+    "2. Data Cleaning & Preparation",
+    "3. Training & Validation",
+    "4. Test & Packing",
+]
+
+STEP_TO_TAB = {
+    1: TAB_LABELS[0],
+    2: TAB_LABELS[1],
+    3: TAB_LABELS[2],
+    4: TAB_LABELS[3],
+}
+
 PLOT_SETTINGS = {
-    "prediction_figsize": (9.6,9.6),
-    "percent_error_figsize": (12.0, 6),
-    "cv_figsize": (10, 6.0),
+    "prediction_figsize": (9.6, 9.6),
+    "percent_error_figsize": (12.0, 6.0),
+    "cv_figsize": (10.0, 6.0),
     "external_comparison_figsize": (8.8, 5.0),
-    "external_error_figsize": (12.0,9.0),
+    "external_error_figsize": (12.0, 9.0),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
     "tick_x_fontsize": 6.0,
@@ -57,13 +71,13 @@ PLOT_SETTINGS = {
 }
 
 PDF_SETTINGS = {
-    "pagesize": A4,
+    "pagesize": landscape(A4),
     "left_margin_cm": 1.2,
     "right_margin_cm": 1.2,
     "top_margin_cm": 1.1,
     "bottom_margin_cm": 1.1,
     "section_gap_cm": 0.35,
-    "small_gap_cm": 1,
+    "small_gap_cm": 1.0,
     "table_chart_gap_cm": 1.0,
     "first_page_table_width_cm": 4.5,
     "training_cv_chart_height_cm": 8.5,
@@ -169,6 +183,8 @@ def init_state() -> None:
     defaults = {
         "app_initialized": False,
         "current_step": 1,
+        "active_tab": STEP_TO_TAB[1],
+        "auto_open_next_tab": False,
         "module_status": {
             "analyzer": "ready",
             "cleaning": "locked",
@@ -237,6 +253,18 @@ def set_module_status(module: str, status: str) -> None:
     st.session_state["module_status"][module] = status
 
 
+def set_active_step(step: int, auto_open: bool = True) -> None:
+    step = max(1, min(4, int(step)))
+    st.session_state["current_step"] = step
+    st.session_state["active_tab"] = STEP_TO_TAB[step]
+    st.session_state["auto_open_next_tab"] = auto_open
+
+
+def go_to_next_step(next_step: int) -> None:
+    set_active_step(next_step, auto_open=True)
+    st.rerun()
+
+
 def parse_yes_no(text: Optional[str]) -> Optional[bool]:
     if text is None:
         return None
@@ -298,6 +326,22 @@ def inject_styles() -> None:
         .section-subtitle {
             color: #444;
             margin-bottom: 0.8rem;
+        }
+        .next-step-glow {
+            margin: 0.45rem 0 0.65rem 0;
+            padding: 0.72rem 0.95rem;
+            border-radius: 16px;
+            border: 1px solid rgba(16, 185, 129, 0.55);
+            background:
+                radial-gradient(circle at top left, rgba(16,185,129,0.20), transparent 34%),
+                linear-gradient(135deg, rgba(16,185,129,0.16), rgba(34,197,94,0.10), rgba(59,130,246,0.08));
+            box-shadow:
+                0 0 0 1px rgba(16,185,129,0.10) inset,
+                0 0 22px rgba(16,185,129,0.12),
+                0 10px 28px rgba(15, 23, 42, 0.08);
+            color: #065f46;
+            font-weight: 800;
+            letter-spacing: 0.02em;
         }
         .train-progress-card {
             border: 1px solid #111;
@@ -404,6 +448,18 @@ def inject_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_next_step_button(label: str, next_step: int, enabled: bool, key: str) -> None:
+    if enabled:
+        st.markdown(
+            "<div class='next-step-glow'>✅ Next step unlocked — ready to continue</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(f"✨ {label}", key=key, use_container_width=True, type="primary"):
+            go_to_next_step(next_step)
+    else:
+        st.button(label, key=key, use_container_width=True, disabled=True)
 
 
 def render_training_progress_widget(
@@ -1248,15 +1304,7 @@ def build_training_pdf(
     )
 
     styles = getSampleStyleSheet()
-    styles.add(
-        ParagraphStyle(
-            name="Meta",
-            fontName="Helvetica",
-            fontSize=8.8,
-            leading=10.5,
-            alignment=TA_LEFT,
-        )
-    )
+    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.8, leading=10.5, alignment=TA_LEFT))
     styles.add(
         ParagraphStyle(
             name="SectionNote",
@@ -1336,7 +1384,7 @@ def build_training_pdf(
     story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
     story.append(Spacer(1, 0.06 * cm))
     story.append(divider())
-    story.append(Spacer(1, 1 * cm))
+    story.append(Spacer(1, 1.0 * cm))
 
     summary_table = simple_table_from_df(
         chosen_cv["summary_df"],
@@ -1412,9 +1460,9 @@ def build_training_pdf(
             ),
             Spacer(1, 0.08 * cm),
             divider(),
-            Spacer(1, 1 * cm),
+            Spacer(1, 1.0 * cm),
             fold_table,
-            Spacer(1, 0.1 * cm),
+            Spacer(1, 0.10 * cm),
             pred_chart,
         ]
 
@@ -1458,7 +1506,6 @@ def build_training_pdf(
         story.append(divider())
         story.append(Spacer(1, 0.75 * cm))
         story.append(err_chart_box)
-
         story.append(PageBreak())
 
     param_df = pd.DataFrame(chosen_cv["parameter_log"])
@@ -1829,9 +1876,9 @@ def module_database_analyzer():
                 st.session_state["input_column"] = input_selection
                 st.session_state["output_column"] = output_selection
                 st.session_state["analyzer_done"] = True
-                st.session_state["current_step"] = 2
                 set_module_status("analyzer", "completed")
                 set_module_status("cleaning", "ready")
+                set_active_step(2, auto_open=True)
 
                 inspection_df = pd.DataFrame([summary])
                 status_info = pd.DataFrame(
@@ -1865,14 +1912,12 @@ def module_database_analyzer():
                 use_container_width=True,
             )
 
-        if st.button(
-            "Proceed to Data Cleaning & Preparation",
-            disabled=not st.session_state["analyzer_done"],
-            use_container_width=True,
+        render_next_step_button(
+            "Open Data Cleaning & Preparation",
+            next_step=2,
+            enabled=st.session_state["analyzer_done"],
             key="proceed_m1",
-        ):
-            st.session_state["current_step"] = 2
-            st.rerun()
+        )
 
     render_log("analyzer", "analyzer_log_view")
 
@@ -1926,7 +1971,7 @@ def module_cleaning_preparation():
             st.session_state["train_val_df"] = train_val_df
             st.session_state["external_test_df"] = external_test_df
             st.session_state["cleaning_done"] = True
-            st.session_state["current_step"] = 3
+            set_active_step(3, auto_open=True)
 
             st.session_state["artifacts"]["clean_data.xlsx"] = to_excel_bytes({"Clean Data": clean_df})
             st.session_state["artifacts"]["external_data_test.xlsx"] = to_excel_bytes({"External Data Test": external_test_df})
@@ -1977,14 +2022,12 @@ def module_cleaning_preparation():
             use_container_width=True,
         )
 
-        if st.button(
-            "Proceed to Training & Validation",
-            disabled=not st.session_state["cleaning_done"],
-            use_container_width=True,
+        render_next_step_button(
+            "Open Training & Validation",
+            next_step=3,
+            enabled=st.session_state["cleaning_done"],
             key="proceed_m2",
-        ):
-            st.session_state["current_step"] = 3
-            st.rerun()
+        )
 
     render_log("cleaning", "cleaning_log_view")
 
@@ -2247,7 +2290,7 @@ def module_training_validation():
                 st.session_state["artifacts"][name] = data
 
             st.session_state["training_done"] = True
-            st.session_state["current_step"] = 4
+            set_active_step(4, auto_open=True)
             st.session_state["training_is_running"] = False
             set_module_status("training", "completed")
             set_module_status("testing", "ready")
@@ -2295,14 +2338,12 @@ def module_training_validation():
             use_container_width=True,
         )
 
-        if st.button(
-            "Proceed to Test & Packing",
-            disabled=not st.session_state["training_done"],
-            use_container_width=True,
+        render_next_step_button(
+            "Open Test & Packing",
+            next_step=4,
+            enabled=st.session_state["training_done"],
             key="proceed_m3",
-        ):
-            st.session_state["current_step"] = 4
-            st.rerun()
+        )
 
     render_log("training", "training_log_view")
 
@@ -2579,12 +2620,8 @@ def main():
     render_final_sidebar()
 
     tabs = st.tabs(
-        [
-            "1. Database Analyzer",
-            "2. Data Cleaning & Preparation",
-            "3. Training & Validation",
-            "4. Test & Packing",
-        ]
+        TAB_LABELS,
+        default=st.session_state.get("active_tab", TAB_LABELS[0]),
     )
 
     with tabs[0]:
