@@ -66,7 +66,7 @@ PDF_SETTINGS = {
     "small_gap_cm": 1,
     "table_chart_gap_cm": 1.0,
     "first_page_table_width_cm": 4.0,
-    "training_cv_chart_height_cm": 7.5,
+    "training_cv_chart_height_cm": 8.5,
     "training_prediction_chart_height_cm": 14.0,
     "training_error_chart_height_cm": 9.0,
     "consolidated_main_chart_height_cm": 8.0,
@@ -1336,7 +1336,7 @@ def build_training_pdf(
     story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
     story.append(Spacer(1, 0.06 * cm))
     story.append(divider())
-    story.append(Spacer(1, 0.12 * cm))
+    story.append(Spacer(1, 1 * cm))
 
     summary_table = simple_table_from_df(
         chosen_cv["summary_df"],
