@@ -44,7 +44,7 @@ APP_SUBTITLE = "PtMeOH Gaussian surrogate modeling from Aspen Plus Excel data"
 RANDOM_STATE = 42
 
 PLOT_SETTINGS = {
-    "prediction_figsize": (10.6, 10.6),
+    "prediction_figsize": (9.6,9.6),
     "percent_error_figsize": (12.0, 6),
     "cv_figsize": (10, 6.0),
     "external_comparison_figsize": (8.8, 5.0),
@@ -65,7 +65,7 @@ PDF_SETTINGS = {
     "section_gap_cm": 0.35,
     "small_gap_cm": 1,
     "table_chart_gap_cm": 1.0,
-    "first_page_table_width_cm": 4.0,
+    "first_page_table_width_cm": 3.5,
     "training_cv_chart_height_cm": 8.5,
     "training_prediction_chart_height_cm": 14.0,
     "training_error_chart_height_cm": 12.0,
