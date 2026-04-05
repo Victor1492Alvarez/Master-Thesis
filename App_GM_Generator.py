@@ -907,7 +907,7 @@ def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> byte
     ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.35)
 
     ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
-    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"],decimals="2")
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_ylabel("Percent Error [%]", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_xticks(x)
     ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
