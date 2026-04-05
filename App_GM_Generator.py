@@ -939,7 +939,6 @@ def build_text_summary(
         )
     return "\n".join(lines)
 
-
 def build_training_pdf(
     model_name: str,
     input_col: str,
@@ -958,23 +957,79 @@ def build_training_pdf(
     )
 
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.8, leading=10.5, alignment=TA_LEFT))
+    styles.add(
+        ParagraphStyle(
+            name="Meta",
+            fontName="Helvetica",
+            fontSize=8.8,
+            leading=10.5,
+            alignment=TA_LEFT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SectionNote",
+            fontName="Helvetica",
+            fontSize=7.1,
+            leading=8.6,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#333333"),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="FoldTitle",
+            parent=styles["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=11.2,
+            leading=13.0,
+            alignment=TA_LEFT,
+            textColor=colors.black,
+            spaceAfter=0,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="FoldSubTitle",
+            fontName="Helvetica",
+            fontSize=7.0,
+            leading=8.4,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#444444"),
+        )
+    )
 
     story = []
     page_width = doc.width
     first_page_table_width = PDF_SETTINGS["first_page_table_width_cm"] * cm
-    first_page_chart_width = page_width - first_page_table_width - (0.35 * cm)
+    first_page_chart_width = page_width - first_page_table_width - (0.32 * cm)
+
+    fold_prediction_height = 6.6 * cm
+    fold_error_height = 8.6 * cm
+
+    def divider():
+        return HRFlowable(
+            width="100%",
+            thickness=0.6,
+            color=colors.black,
+            spaceBefore=0,
+            spaceAfter=0,
+            lineCap="round",
+        )
 
     story.append(Paragraph("Training & Validation Report", styles["Title"]))
-    story.append(Spacer(1, 0.22 * cm))
+    story.append(Spacer(1, 0.20 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
-    story.append(Spacer(1, 0,22 * cm))
+    story.append(Spacer(1, 0.22 * cm))
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
+        story.append(Spacer(1, 0.06 * cm))
+        story.append(divider())
+        story.append(Spacer(1, 0.10 * cm))
         story.append(
             simple_table_from_df(
                 comparison_df,
@@ -985,9 +1040,12 @@ def build_training_pdf(
                 header_font_size=6.7,
             )
         )
-        story.append(Spacer(1, PDF_SETTINGS["section_gap_cm"] * cm))
+        story.append(Spacer(1, 0.26 * cm))
+
     story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
-    story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
+    story.append(Spacer(1, 0.06 * cm))
+    story.append(divider())
+    story.append(Spacer(1, 0.12 * cm))
 
     summary_table = simple_table_from_df(
         chosen_cv["summary_df"],
@@ -1014,54 +1072,111 @@ def build_training_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
             ]
         )
     )
 
     story.append(top_layout)
+    story.append(PageBreak())
 
-    for fold_name, df_fold in chosen_cv["fold_tables"].items():
+    fold_items = list(chosen_cv["fold_tables"].items())
+    total_folds = len(fold_items)
+
+    for idx, (fold_name, df_fold) in enumerate(fold_items, start=1):
         plot_key = f"{fold_name}_prediction.png"
         error_key = f"{fold_name}_error.png"
+        fold_label = fold_name.replace("_", " ")
 
-        story.append(Paragraph(f"{fold_name.replace('_', ' ')} results", styles["Heading2"]))
-        story.append(Spacer(1, 0.10 * cm))
-        story.append(
-            simple_table_from_df(
-                df_fold,
-                max_rows=18,
-                available_width=page_width,
-                decimals=4,
-                font_size=5.9,
-                header_font_size=6.2,
-            )
+        n_points = len(df_fold)
+        mean_abs_err = float(df_fold["Absolute Error"].mean()) if "Absolute Error" in df_fold.columns else float("nan")
+        mean_pct_err = float(np.nanmean(df_fold["Percent Error"])) if "Percent Error" in df_fold.columns else float("nan")
+
+        fold_table = simple_table_from_df(
+            df_fold,
+            max_rows=18,
+            available_width=page_width,
+            decimals=4,
+            font_size=5.7,
+            header_font_size=6.0,
         )
-        story.append(Spacer(1, 0.20 * cm))
 
         pred_chart = Image(
             io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]),
             width=page_width,
-            height=PDF_SETTINGS["training_prediction_chart_height_cm"] * cm,
+            height=fold_prediction_height,
         )
         pred_chart.hAlign = "CENTER"
-        story.append(pred_chart)
-        story.append(Spacer(1, 0.18 * cm))
+
+        fold_page_one = [
+            Paragraph(f"{fold_label} — validation results", styles["FoldTitle"]),
+            Spacer(1, 0.04 * cm),
+            Paragraph(
+                f"Fold {idx} of {total_folds}. Validation points: {n_points}. "
+                f"Mean absolute error: {mean_abs_err:.4f}. Mean percent error: {mean_pct_err:.4f}%.",
+                styles["FoldSubTitle"],
+            ),
+            Spacer(1, 0.08 * cm),
+            divider(),
+            Spacer(1, 0.10 * cm),
+            fold_table,
+            Spacer(1, 0.22 * cm),
+            pred_chart,
+        ]
+
+        story.append(KeepTogether(fold_page_one))
+        story.append(PageBreak())
 
         err_chart = Image(
             io.BytesIO(chosen_cv["fold_error_plots"][error_key]),
-            width=page_width,
-            height=PDF_SETTINGS["training_error_chart_height_cm"] * cm,
+            width=page_width * 0.96,
+            height=fold_error_height,
         )
         err_chart.hAlign = "CENTER"
-        story.append(err_chart)
-        story.append(PageBreak())
+
+        err_chart_box = Table(
+            [[err_chart]],
+            colWidths=[page_width],
+            hAlign="CENTER",
+        )
+        err_chart_box.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+
+        story.append(Paragraph(f"{fold_label} — percent error profile", styles["FoldTitle"]))
+        story.append(Spacer(1, 0.04 * cm))
+        story.append(
+            Paragraph(
+                f"Fold {idx} of {total_folds}. Distribution of percent error across the validation subset.",
+                styles["FoldSubTitle"],
+            )
+        )
+        story.append(Spacer(1, 0.08 * cm))
+        story.append(divider())
+        story.append(Spacer(1, 0.75 * cm))
+        story.append(err_chart_box)
+
+        if idx < total_folds:
+            story.append(PageBreak())
+        else:
+            story.append(PageBreak())
 
     param_df = pd.DataFrame(chosen_cv["parameter_log"])
     story.append(Paragraph("Temporary parameter log", styles["Heading2"]))
+    story.append(Spacer(1, 0.06 * cm))
+    story.append(divider())
     story.append(Spacer(1, 0.10 * cm))
     story.append(
         simple_table_from_df(
@@ -1078,8 +1193,7 @@ def build_training_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
-
-
+    
 def build_consolidated_pdf(
     model_name: str,
     input_col: str,
