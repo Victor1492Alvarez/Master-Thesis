@@ -1412,9 +1412,9 @@ def build_training_pdf(
             ),
             Spacer(1, 0.08 * cm),
             divider(),
-            Spacer(1, 0.10 * cm),
+            Spacer(1, 1 * cm),
             fold_table,
-            Spacer(1, 0.22 * cm),
+            Spacer(1, 0.1 * cm),
             pred_chart,
         ]
 
