@@ -1296,7 +1296,7 @@ def build_training_pdf(
     first_page_chart_width = page_width - first_page_table_width - (0.32 * cm)
 
     fold_prediction_height = 15 * cm
-    fold_error_height = 8.6 * cm
+    fold_error_height = 7.5 * cm
 
     def divider():
         return HRFlowable(
