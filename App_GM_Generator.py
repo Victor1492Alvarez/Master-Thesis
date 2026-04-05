@@ -59,7 +59,7 @@ PDF_SETTINGS = {
     "training_prediction_chart_height_cm": 11.0,
     "training_error_chart_height_cm": 9.0,
     "consolidated_main_chart_height_cm": 8.0,
-    "consolidated_error_chart_height_cm": 10.0,
+    "consolidated_error_chart_height_cm": 12.0,
 }
 
 plt.rcParams.update(
@@ -1291,7 +1291,7 @@ def build_consolidated_pdf(
     story.append(Spacer(1, 0.18 * cm))
 
     story.append(Paragraph("External test percent error", styles["Heading2"]))
-    story.append(Spacer(1, 0.10 * cm))
+    story.append(Spacer(2, 0.22 * cm))
     err_chart = Image(
         io.BytesIO(external_error_plot_bytes),
         width=page_width,
