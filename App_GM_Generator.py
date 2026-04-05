@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import joblib
 import matplotlib
@@ -17,10 +18,20 @@ import pandas as pd
 import streamlit as st
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (
+    HRFlowable,
+    Image,
+    KeepTogether,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF, WhiteKernel
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -31,6 +42,50 @@ from sklearn.preprocessing import StandardScaler
 APP_TITLE = "Gaussian Model Generator"
 APP_SUBTITLE = "PtMeOH Gaussian surrogate modeling from Aspen Plus Excel data"
 RANDOM_STATE = 42
+
+TAB_LABELS = [
+    "1. Database Analyzer",
+    "2. Data Cleaning & Preparation",
+    "3. Training & Validation",
+    "4. Test & Packing",
+]
+
+STEP_TO_TAB = {
+    1: TAB_LABELS[0],
+    2: TAB_LABELS[1],
+    3: TAB_LABELS[2],
+    4: TAB_LABELS[3],
+}
+
+PLOT_SETTINGS = {
+    "prediction_figsize": (9.6, 9.6),
+    "percent_error_figsize": (12.0, 6.0),
+    "cv_figsize": (10.0, 6.0),
+    "external_comparison_figsize": (8.8, 5.0),
+    "external_error_figsize": (12.0, 9.0),
+    "title_fontsize": 10,
+    "axis_label_fontsize": 9,
+    "tick_x_fontsize": 6.0,
+    "tick_y_fontsize": 10,
+    "legend_fontsize": 10,
+}
+
+PDF_SETTINGS = {
+    "pagesize": A4,
+    "left_margin_cm": 1.2,
+    "right_margin_cm": 1.2,
+    "top_margin_cm": 1.1,
+    "bottom_margin_cm": 1.1,
+    "section_gap_cm": 0.35,
+    "small_gap_cm": 1.0,
+    "table_chart_gap_cm": 1.0,
+    "first_page_table_width_cm": 4.25,
+    "training_cv_chart_height_cm": 8.5,
+    "training_prediction_chart_height_cm": 14.0,
+    "training_error_chart_height_cm": 12.0,
+    "consolidated_main_chart_height_cm": 8.0,
+    "consolidated_error_chart_height_cm": 12.5,
+}
 
 plt.rcParams.update(
     {
@@ -128,6 +183,8 @@ def init_state() -> None:
     defaults = {
         "app_initialized": False,
         "current_step": 1,
+        "active_tab": STEP_TO_TAB[1],
+        "auto_open_next_tab": False,
         "module_status": {
             "analyzer": "ready",
             "cleaning": "locked",
@@ -167,6 +224,13 @@ def init_state() -> None:
         "diagnostics_text": [],
         "final_approved": False,
         "artifacts": {},
+        "training_progress_pct": 0,
+        "training_progress_title": "Idle",
+        "training_progress_detail": "Waiting to start.",
+        "training_progress_fold": 0,
+        "training_progress_total_folds": 5,
+        "training_live_metrics": {},
+        "training_is_running": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -177,7 +241,6 @@ def reset_workflow() -> None:
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     init_state()
-    st.session_state["current_step_nav"] = 1
     st.rerun()
 
 
@@ -190,43 +253,25 @@ def set_module_status(module: str, status: str) -> None:
     st.session_state["module_status"][module] = status
 
 
+def set_active_step(step: int, auto_open: bool = True) -> None:
+    step = max(1, min(4, int(step)))
+    st.session_state["current_step"] = step
+    st.session_state["active_tab"] = STEP_TO_TAB[step]
+    st.session_state["auto_open_next_tab"] = auto_open
+
+
+def go_to_next_step(next_step: int) -> None:
+    set_active_step(next_step, auto_open=True)
+    st.rerun()
+
+
 def parse_yes_no(text: Optional[str]) -> Optional[bool]:
-    if isinstance(text, bool):
-        return text
     if text is None:
         return None
     normalized = str(text).strip().lower()
     if normalized in {"y", "yes"}:
         return True
     if normalized in {"n", "no"}:
-        return False
-    return None
-
-
-def render_yes_no_check_buttons(
-    label: str,
-    key: str,
-    yes_label: str = "âœ” Yes",
-    no_label: str = "âœ– No",
-    help_text: Optional[str] = None,
-) -> Optional[bool]:
-    choice_key = f"{key}__choice"
-    if choice_key not in st.session_state:
-        st.session_state[choice_key] = None
-    st.markdown(f'<div class="yn-check-label">{label}</div>', unsafe_allow_html=True)
-    choice = st.segmented_control(
-        label,
-        options=[yes_label, no_label],
-        key=choice_key,
-        selection_mode="single",
-        default=st.session_state.get(choice_key),
-        help=help_text,
-        label_visibility="collapsed",
-        width="stretch",
-    )
-    if choice == yes_label:
-        return True
-    if choice == no_label:
         return False
     return None
 
@@ -249,8 +294,8 @@ def status_badge_html(status: str) -> str:
 
 
 def render_log(module: str, key: str) -> None:
-    return None
-
+    log_text = "\n".join(st.session_state["logs"][module][-300:])
+    st.text_area("Scrolling log panel", value=log_text, height=240, disabled=True, key=key)
 
 
 def inject_styles() -> None:
@@ -282,43 +327,274 @@ def inject_styles() -> None:
             color: #444;
             margin-bottom: 0.8rem;
         }
-        .yn-check-label {
-            font-size: 0.90rem;
+        .next-step-glow {
+            margin: 0.45rem 0 0.65rem 0;
+            padding: 0.72rem 0.95rem;
+            border-radius: 16px;
+            border: 1px solid rgba(16, 185, 129, 0.55);
+            background:
+                radial-gradient(circle at top left, rgba(16,185,129,0.20), transparent 34%),
+                linear-gradient(135deg, rgba(16,185,129,0.16), rgba(34,197,94,0.10), rgba(59,130,246,0.08));
+            box-shadow:
+                0 0 0 1px rgba(16,185,129,0.10) inset,
+                0 0 22px rgba(16,185,129,0.12),
+                0 10px 28px rgba(15, 23, 42, 0.08);
+            color: #065f46;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+        }
+        .train-progress-card {
+            border: 1px solid #111;
+            border-radius: 1rem;
+            padding: 1rem 1.1rem;
+            background:
+                radial-gradient(circle at top left, rgba(120,160,255,0.10), transparent 34%),
+                linear-gradient(180deg, #ffffff 0%, #f6f8fc 100%);
+            box-shadow: 0 10px 30px rgba(10, 20, 40, 0.06);
+            margin-bottom: 0.8rem;
+        }
+        .train-progress-grid {
+            display: grid;
+            grid-template-columns: 170px 1fr;
+            gap: 1rem;
+            align-items: center;
+        }
+        .train-ring-wrap {
+            position: relative;
+            width: 160px;
+            height: 160px;
+            margin: 0 auto;
+        }
+        .train-ring-svg {
+            width: 160px;
+            height: 160px;
+            transform: rotate(-90deg);
+            overflow: visible;
+        }
+        .train-ring-track {
+            fill: none;
+            stroke: #d9dfeb;
+            stroke-width: 10;
+        }
+        .train-ring-value {
+            fill: none;
+            stroke: url(#trainRingGradient);
+            stroke-width: 10;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 260ms ease;
+            filter: drop-shadow(0 0 8px rgba(73, 120, 255, 0.20));
+        }
+        .train-ring-orbit {
+            position: absolute;
+            inset: 10px;
+            border-radius: 50%;
+            border: 1px dashed rgba(30, 50, 90, 0.18);
+            animation: train-spin 8s linear infinite;
+        }
+        .train-ring-center {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .train-progress-pct {
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            line-height: 1;
+            color: #0f172a;
+        }
+        .train-progress-mini {
+            font-size: 0.72rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #475569;
+            margin-top: 0.2rem;
+        }
+        .train-progress-title {
+            font-size: 1.05rem;
             font-weight: 800;
             color: #0f172a;
-            margin: 0.30rem 0 0.40rem 0;
-            letter-spacing: 0.01em;
+            margin-bottom: 0.25rem;
         }
-        div[data-testid="stSegmentedControl"] {
-            margin-bottom: 0.55rem;
+        .train-progress-detail {
+            color: #334155;
+            margin-bottom: 0.45rem;
+            line-height: 1.45;
         }
-        div[data-testid="stSegmentedControl"] button {
-            min-height: 3rem !important;
-            border-radius: 16px !important;
-            border: 1px solid rgba(15, 23, 42, 0.10) !important;
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
-            color: #0f172a !important;
-            font-weight: 800 !important;
-            letter-spacing: 0.01em !important;
-            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05) !important;
+        .train-progress-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
         }
-        div[data-testid="stSegmentedControl"] button[aria-pressed="true"] {
-            background: linear-gradient(135deg, rgba(5,150,105,0.98), rgba(22,163,74,0.92)) !important;
-            color: #ecfdf5 !important;
-            border-color: rgba(16,185,129,1) !important;
-            box-shadow: 0 0 0 1px rgba(16,185,129,0.18) inset, 0 0 18px rgba(16,185,129,0.18), 0 12px 26px rgba(6, 78, 59, 0.18) !important;
+        .train-chip {
+            display: inline-block;
+            border: 1px solid #111;
+            border-radius: 999px;
+            padding: 0.22rem 0.6rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            background: #fff;
+            color: #111;
         }
-        .workflow-nav-title {
-            font-size: 0.92rem;
-            font-weight: 800;
-            color: #0f172a;
-            margin: 0.2rem 0 0.55rem 0;
-            letter-spacing: 0.01em;
+        @keyframes train-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_next_step_button(label: str, next_step: int, enabled: bool, key: str) -> None:
+    if enabled:
+        st.markdown(
+            "<div class='next-step-glow'>✅ Next step unlocked — ready to continue</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(f"✨ {label}", key=key, use_container_width=True, type="primary"):
+            go_to_next_step(next_step)
+    else:
+        st.button(label, key=key, use_container_width=True, disabled=True)
+
+
+def render_training_progress_widget(
+    container,
+    percent: int,
+    title: str,
+    detail: str,
+    fold_idx: int = 0,
+    total_folds: int = 5,
+    live_metrics: Optional[Dict[str, float]] = None,
+):
+    percent = max(0, min(100, int(percent)))
+    radius = 54
+    circumference = 2 * np.pi * radius
+    offset = circumference * (1 - percent / 100.0)
+    fold_text = f"Fold {fold_idx}/{total_folds}" if fold_idx > 0 else "Preparing"
+
+    metrics_html = ""
+    if live_metrics:
+        rmse = live_metrics.get("RMSE")
+        mae = live_metrics.get("MAE")
+        r2 = live_metrics.get("R2")
+        chips = []
+        if rmse is not None:
+            chips.append(f"<span class='train-chip'>RMSE {rmse:.4f}</span>")
+        if mae is not None:
+            chips.append(f"<span class='train-chip'>MAE {mae:.4f}</span>")
+        if r2 is not None and not pd.isna(r2):
+            chips.append(f"<span class='train-chip'>R² {r2:.4f}</span>")
+        metrics_html = "".join(chips)
+
+    container.markdown(
+        f"""
+        <div class="train-progress-card">
+            <div class="train-progress-grid">
+                <div class="train-ring-wrap">
+                    <div class="train-ring-orbit"></div>
+                    <svg class="train-ring-svg" viewBox="0 0 140 140">
+                        <defs>
+                            <linearGradient id="trainRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#0f172a"/>
+                                <stop offset="55%" stop-color="#2563eb"/>
+                                <stop offset="100%" stop-color="#7c3aed"/>
+                            </linearGradient>
+                        </defs>
+                        <circle class="train-ring-track" cx="70" cy="70" r="{radius}"></circle>
+                        <circle
+                            class="train-ring-value"
+                            cx="70" cy="70" r="{radius}"
+                            stroke-dasharray="{circumference:.2f}"
+                            stroke-dashoffset="{offset:.2f}">
+                        </circle>
+                    </svg>
+                    <div class="train-ring-center">
+                        <div class="train-progress-pct">{percent}%</div>
+                        <div class="train-progress-mini">training</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="train-progress-title">{title}</div>
+                    <div class="train-progress-detail">{detail}</div>
+                    <div class="train-progress-meta">
+                        <span class="train-chip">{fold_text}</span>
+                        <span class="train-chip">{percent}% completed</span>
+                        {metrics_html}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def update_training_progress(
+    visual_placeholder,
+    native_bar,
+    status_box,
+    percent: int,
+    title: str,
+    detail: str,
+    fold_idx: int = 0,
+    total_folds: int = 5,
+    state: str = "running",
+):
+    percent = max(0, min(100, int(percent)))
+    st.session_state["training_progress_pct"] = percent
+    st.session_state["training_progress_title"] = title
+    st.session_state["training_progress_detail"] = detail
+    st.session_state["training_progress_fold"] = fold_idx
+    st.session_state["training_progress_total_folds"] = total_folds
+
+    render_training_progress_widget(
+        visual_placeholder,
+        percent=percent,
+        title=title,
+        detail=detail,
+        fold_idx=fold_idx,
+        total_folds=total_folds,
+        live_metrics=st.session_state.get("training_live_metrics", {}),
+    )
+    native_bar.progress(percent / 100.0, text=f"{title} — {detail}")
+    if status_box is not None:
+        status_box.update(label=f"{title} — {detail}", state=state, expanded=True)
+
+
+def smooth_progress(
+    visual_placeholder,
+    native_bar,
+    status_box,
+    target_percent: int,
+    title: str,
+    detail: str,
+    fold_idx: int = 0,
+    total_folds: int = 5,
+    state: str = "running",
+    delay: float = 0.012,
+):
+    current = int(st.session_state.get("training_progress_pct", 0))
+    target = max(0, min(100, int(target_percent)))
+    if target < current:
+        current = target
+    for pct in range(current, target + 1):
+        update_training_progress(
+            visual_placeholder,
+            native_bar,
+            status_box,
+            percent=pct,
+            title=title,
+            detail=detail,
+            fold_idx=fold_idx,
+            total_folds=total_folds,
+            state=state,
+        )
+        time.sleep(delay)
 
 
 def render_header() -> None:
@@ -536,14 +812,30 @@ def _pdf_format_value(value, decimals: int = 4) -> str:
     return str(value)
 
 
-def _estimate_pdf_col_widths(df: pd.DataFrame, available_width: float, max_rows: int = 20, decimals: int = 4) -> List[float]:
+def _estimate_pdf_col_widths(
+    df: pd.DataFrame,
+    available_width: float,
+    max_rows: int = 20,
+    decimals: int = 4,
+    min_chars: int = 6,
+    max_chars: int = 22,
+) -> List[float]:
     preview = df.head(max_rows).copy()
     raw_widths = []
+
     for col in preview.columns:
         samples = [str(col)]
         samples.extend(_pdf_format_value(v, decimals) for v in preview[col].tolist())
-        max_len = max(len(x) for x in samples) if samples else 8
-        raw_widths.append(min(max(max_len, 7), 24))
+        max_len = max(len(x) for x in samples) if samples else min_chars
+
+        col_name = str(col).strip().lower()
+        if col_name in {"fitted kernel", "kernel name", "kernel_parameters", "kernel parameters"}:
+            max_len = min(max(max_len + 3, 12), 28)
+        else:
+            max_len = min(max(max_len, min_chars), max_chars)
+
+        raw_widths.append(max_len)
+
     total = sum(raw_widths) if raw_widths else 1
     return [available_width * (w / total) for w in raw_widths]
 
@@ -553,51 +845,57 @@ def simple_table_from_df(
     max_rows: int = 20,
     available_width: Optional[float] = None,
     decimals: int = 4,
-    font_size: float = 6.8,
-    header_font_size: float = 7.0,
+    font_size: float = 6.6,
+    header_font_size: float = 6.8,
     justify_cols: Optional[List[str]] = None,
 ) -> Table:
     preview = df.head(max_rows).copy().fillna("")
-    available_width = available_width or (16.8 * cm)
-    justify_cols = justify_cols or []
+    available_width = available_width or (24.5 * cm)
+    justify_cols = {str(c) for c in (justify_cols or [])}
 
     header_style = ParagraphStyle(
-        "pdf_header_style",
+        "pdf_header_style_v2",
         fontName="Helvetica-Bold",
         fontSize=header_font_size,
-        leading=header_font_size + 1.1,
+        leading=header_font_size + 1.0,
         alignment=TA_CENTER,
         wordWrap="CJK",
         textColor=colors.black,
     )
     num_style = ParagraphStyle(
-        "pdf_num_style",
+        "pdf_num_style_v2",
         fontName="Helvetica",
         fontSize=font_size,
-        leading=font_size + 1.0,
+        leading=font_size + 0.9,
         alignment=TA_RIGHT,
         wordWrap="CJK",
     )
     text_style = ParagraphStyle(
-        "pdf_text_style",
+        "pdf_text_style_v2",
         fontName="Helvetica",
         fontSize=font_size,
-        leading=font_size + 1.0,
+        leading=font_size + 0.9,
         alignment=TA_LEFT,
         wordWrap="CJK",
     )
     justify_style = ParagraphStyle(
-        "pdf_justify_style",
+        "pdf_justify_style_v2",
         fontName="Helvetica",
         fontSize=font_size,
-        leading=font_size + 1.0,
+        leading=font_size + 0.9,
         alignment=TA_JUSTIFY,
         wordWrap="CJK",
     )
 
-    col_widths = _estimate_pdf_col_widths(preview, available_width=available_width, max_rows=max_rows, decimals=decimals)
+    col_widths = _estimate_pdf_col_widths(
+        preview,
+        available_width=available_width,
+        max_rows=max_rows,
+        decimals=decimals,
+    )
 
     rows = [[Paragraph(str(col), header_style) for col in preview.columns]]
+
     for _, row in preview.iterrows():
         row_cells = []
         for col, value in row.items():
@@ -615,12 +913,12 @@ def simple_table_from_df(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.black),
+                ("GRID", (0, 0), (-1, -1), 0.30, colors.black),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 2.5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 2.5),
-                ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2.0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2.0),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.0),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f6f6f6")]),
             ]
         )
@@ -636,75 +934,81 @@ def create_prediction_plot(
     uncertainty_col: Optional[str] = None,
 ) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.2, 4.3))
-    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=28, label="Aspen")
-    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.8, label="Gaussian model")
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["prediction_figsize"])
+
+    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=28, label="Aspen simulation")
+    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.8, label="Gaussian model estimation")
 
     if uncertainty_col and uncertainty_col in ordered.columns:
         lower = ordered["Prediction"] - 1.96 * ordered[uncertainty_col]
         upper = ordered["Prediction"] + 1.96 * ordered[uncertainty_col]
         ax.fill_between(ordered[input_col], lower, upper, color="0.82", alpha=1.0, label="95% interval")
 
-    ax.set_title(title)
-    ax.set_xlabel(input_col)
-    ax.set_ylabel(output_col)
-    ax.grid(True, color="0.88", linewidth=0.8)
-    ax.legend(frameon=False)
+    ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.grid(True, color="0.88", linewidth=0.10)
+    ax.legend(frameon=False, fontsize=PLOT_SETTINGS["legend_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_error_plot(df_plot: pd.DataFrame, input_col: str, title: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.2, 3.3))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["percent_error_figsize"])
 
     x = np.arange(len(ordered))
-    ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.5)
+    ax.bar(x, ordered["Percent Error"], color="0.25", edgecolor="black", linewidth=0.35)
 
-    ax.set_title(title)
-    ax.set_xlabel(input_col)
-    ax.set_ylabel("Percent Error [%]")
+    ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel("Percent Error [%]", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_xticks(x)
     ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
-    ax.tick_params(axis="x", labelsize=6)
-    ax.tick_params(axis="y", labelsize=8)
+    ax.tick_params(axis="x", labelsize=5.0)
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax.grid(True, axis="y", color="0.85", linewidth=0.8)
     ax.margins(x=0.01)
     fig.tight_layout()
-
     return fig_to_png_bytes(fig)
 
 
 def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
-    fig, ax1 = plt.subplots(figsize=(8.2, 4.4))
+    fig, ax1 = plt.subplots(figsize=PLOT_SETTINGS["cv_figsize"])
     x = np.arange(len(metrics_df))
     width = 0.34
 
-    ax1.bar(x - width / 2, metrics_df["RMSE"], width=width, color="0.20", label="RMSE")
-    ax1.bar(x + width / 2, metrics_df["MAE"], width=width, color="0.65", label="MAE")
-    ax1.set_xlabel("Fold")
-    ax1.set_ylabel("Error magnitude")
+    ax1.bar(x - width / 2, metrics_df["RMSE"], width=0.25, color="0.20", label="RMSE")
+    ax1.bar(x + width / 2, metrics_df["MAE"], width=0.25, color="0.65", label="MAE")
+    ax1.set_xlabel("Fold", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax1.set_ylabel("Error magnitude", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax1.set_xticks(x)
     ax1.set_xticklabels(metrics_df["Fold"].astype(str))
+    ax1.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax1.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax1.grid(True, axis="y", color="0.88", linewidth=0.8)
 
     ax2 = ax1.twinx()
-    ax2.plot(x, metrics_df["R2"], color="black", linewidth=1.8, marker="o", label="RÂ²")
-    ax2.set_ylabel("RÂ²")
+    ax2.plot(x, metrics_df["R2"], color="black", linewidth=1.8, marker="o", label="R²")
+    ax2.set_ylabel("R²", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax2.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, frameon=False, loc="upper right")
-    ax1.set_title("5-Fold Cross-Validation Metrics")
+    ax1.legend(lines1 + lines2, labels1 + labels2, frameon=False, loc="upper right", fontsize=PLOT_SETTINGS["legend_fontsize"])
+    ax1.set_title("5-Fold Cross-Validation Metrics", fontsize=PLOT_SETTINGS["title_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, output_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(8.4, 4.6))
-    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=30, label="Aspen points")
-    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=2.0, label="Gaussian model")
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_comparison_figsize"])
+
+    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=15, label="Aspen points")
+    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.5, label="Gaussian model")
     ax.fill_between(
         ordered[input_col],
         ordered["Prediction"] - 1.96 * ordered["Predictive Std"],
@@ -712,28 +1016,32 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         color="0.85",
         label="95% interval",
     )
-    ax.set_title("External Test: Gaussian Model vs Aspen Data")
-    ax.set_xlabel(input_col)
-    ax.set_ylabel(output_col)
+    ax.set_title("External Test: Gaussian Model vs Aspen Data", fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.tick_params(axis="x", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
     ax.grid(True, color="0.88", linewidth=0.8)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, fontsize=PLOT_SETTINGS["legend_fontsize"])
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
 
 def create_external_error_plot(df_plot: pd.DataFrame, input_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.2, 3.3))
+    fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_error_figsize"])
+
     x = np.arange(len(ordered))
-    ax.bar(x, ordered["Absolute Error"], color="0.4", edgecolor="black", linewidth=0.5)
+    ax.bar(x, ordered["Percent Error"], color="0.4", edgecolor="black", linewidth=0.4)
     ax.set_xticks(x)
     ax.set_xticklabels([f"{v:.4f}" for v in ordered[input_col].tolist()], rotation=90)
-    ax.tick_params(axis="x", labelsize=6)
-    ax.tick_params(axis="y", labelsize=8)
-    ax.set_title("External Test Absolute Error by Run")
-    ax.set_xlabel(input_col)
-    ax.set_ylabel("Absolute Error")
+    ax.tick_params(axis="x", labelsize=5.0)
+    ax.tick_params(axis="y", labelsize=PLOT_SETTINGS["tick_y_fontsize"])
+    ax.set_title("External Test: Percent Error by Run", fontsize=PLOT_SETTINGS["title_fontsize"])
+    ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
+    ax.set_ylabel("Percent Error [%]", fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.grid(True, axis="y", color="0.88", linewidth=0.8)
+    ax.margins(x=0.01)
     fig.tight_layout()
     return fig_to_png_bytes(fig)
 
@@ -746,6 +1054,9 @@ def perform_cv(
     use_white_kernel: bool,
     alpha_value: float,
     enable_logs: bool = True,
+    progress_callback: Optional[Callable] = None,
+    progress_range: Tuple[int, int] = (1, 90),
+    phase_label: str = "Cross-validation",
 ) -> Dict:
     if len(df) < 5:
         raise ValueError("At least 5 rows are required in the training-validation dataset for 5-fold CV.")
@@ -763,22 +1074,51 @@ def perform_cv(
     fold_prediction_plots = {}
     fold_error_plots = {}
 
+    total_folds = 5
+    start_pct, end_pct = progress_range
+
+    def emit(pct: int, title: str, detail: str, fold_idx: int = 0):
+        if progress_callback is not None:
+            progress_callback(int(pct), title, detail, fold_idx, total_folds)
+
+    emit(start_pct, f"{phase_label} initialized", "Preparing 5-fold workflow.", 0)
+
     for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X), start=1):
+        fold_span = (end_pct - start_pct) / total_folds
+        fold_start = start_pct + (fold_idx - 1) * fold_span
+        fold_end = start_pct + fold_idx * fold_span
+
+        emit(round(fold_start + 1), f"{phase_label} — Fold {fold_idx}", "Preparing split.", fold_idx)
+
         if enable_logs:
             add_log("training", f"Fold {fold_idx}/5 started using kernel {kernel_name}.")
 
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
+        emit(round(fold_start + 4), f"{phase_label} — Fold {fold_idx}", "Building Gaussian Process model.", fold_idx)
+
         model = GaussianSurrogate1D(
             kernel_name=kernel_name,
             use_white_kernel=use_white_kernel,
             alpha=alpha_value,
-        ).fit(X_train, y_train)
+        )
 
+        emit(round(fold_start + 8), f"{phase_label} — Fold {fold_idx}", "Training model on fold subset.", fold_idx)
+        model.fit(X_train, y_train)
+
+        emit(round(fold_start + 12), f"{phase_label} — Fold {fold_idx}", "Generating validation predictions.", fold_idx)
         y_pred, y_std = model.predict(X_val, return_std=True)
+
+        emit(round(fold_start + 14), f"{phase_label} — Fold {fold_idx}", "Computing metrics and error profile.", fold_idx)
         metrics = compute_metrics(y_val, y_pred)
         percent_error = safe_percent_error(y_val, y_pred)
+
+        st.session_state["training_live_metrics"] = {
+            "RMSE": metrics["RMSE"],
+            "MAE": metrics["MAE"],
+            "R2": metrics["R2"],
+        }
 
         fold_df = pd.DataFrame(
             {
@@ -790,6 +1130,8 @@ def perform_cv(
                 "Percent Error": percent_error,
             }
         ).sort_values(input_col).reset_index(drop=True)
+
+        emit(round(fold_start + 16), f"{phase_label} — Fold {fold_idx}", "Rendering fold charts.", fold_idx)
 
         parameter_log.append(
             {
@@ -826,10 +1168,12 @@ def perform_cv(
             f"Fold {fold_idx}: Percent Error",
         )
 
+        emit(round(fold_end), f"{phase_label} — Fold {fold_idx}", "Fold completed successfully.", fold_idx)
+
         if enable_logs:
             add_log(
                 "training",
-                f"Fold {fold_idx}/5 completed. RMSE={metrics['RMSE']:.6f}, MAE={metrics['MAE']:.6f}, RÂ²={metrics['R2']:.6f}.",
+                f"Fold {fold_idx}/5 completed. RMSE={metrics['RMSE']:.6f}, MAE={metrics['MAE']:.6f}, R²={metrics['R2']:.6f}.",
             )
 
     metrics_df = pd.DataFrame(fold_results)
@@ -952,99 +1296,232 @@ def build_training_pdf(
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        rightMargin=1.4 * cm,
-        leftMargin=1.4 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        pagesize=PDF_SETTINGS["pagesize"],
+        rightMargin=PDF_SETTINGS["right_margin_cm"] * cm,
+        leftMargin=PDF_SETTINGS["left_margin_cm"] * cm,
+        topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
+        bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
     )
+
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.7, leading=10.5, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.8, leading=10.5, alignment=TA_LEFT))
+    styles.add(
+        ParagraphStyle(
+            name="SectionNote",
+            fontName="Helvetica",
+            fontSize=7.1,
+            leading=8.6,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#333333"),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="FoldTitle",
+            parent=styles["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=11.2,
+            leading=13.0,
+            alignment=TA_LEFT,
+            textColor=colors.black,
+            spaceAfter=0,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="FoldSubTitle",
+            fontName="Helvetica",
+            fontSize=7.0,
+            leading=8.4,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#444444"),
+        )
+    )
+
     story = []
     page_width = doc.width
+    first_page_table_width = PDF_SETTINGS["first_page_table_width_cm"] * cm
+    first_page_chart_width = page_width - first_page_table_width - (0.32 * cm)
+
+    fold_prediction_height = 17.5 * cm
+    fold_error_height = 8.0 * cm
+
+    def divider():
+        return HRFlowable(
+            width="100%",
+            thickness=0.6,
+            color=colors.black,
+            spaceBefore=0,
+            spaceAfter=0,
+            lineCap="round",
+        )
 
     story.append(Paragraph("Training & Validation Report", styles["Title"]))
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.20 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
-    story.append(Spacer(1, 0.30 * cm))
+    story.append(Spacer(1, 0.22 * cm))
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
+        story.append(Spacer(1, 0.06 * cm))
+        story.append(divider())
+        story.append(Spacer(1, 0.10 * cm))
         story.append(
             simple_table_from_df(
                 comparison_df,
                 max_rows=10,
                 available_width=page_width,
                 decimals=4,
-                font_size=6.6,
-                header_font_size=6.9,
+                font_size=6.4,
+                header_font_size=6.7,
             )
         )
-        story.append(Spacer(1, 0.30 * cm))
+        story.append(Spacer(1, 0.26 * cm))
 
-    story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
-    story.append(
-        simple_table_from_df(
-            chosen_cv["summary_df"],
-            max_rows=10,
-            available_width=page_width,
-            decimals=4,
-            font_size=6.8,
-            header_font_size=7.0,
+    story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
+    story.append(Spacer(1, 0.06 * cm))
+    story.append(divider())
+    story.append(Spacer(1, 1.0 * cm))
+
+    summary_table = simple_table_from_df(
+        chosen_cv["summary_df"],
+        max_rows=10,
+        available_width=first_page_table_width,
+        decimals=4,
+        font_size=6.8,
+        header_font_size=7.0,
+    )
+
+    cv_chart = Image(
+        io.BytesIO(chosen_cv["cv_metrics_plot"]),
+        width=first_page_chart_width,
+        height=PDF_SETTINGS["training_cv_chart_height_cm"] * cm,
+    )
+    cv_chart.hAlign = "CENTER"
+
+    top_layout = Table(
+        [[summary_table, cv_chart]],
+        colWidths=[first_page_table_width, first_page_chart_width],
+        hAlign="CENTER",
+    )
+    top_layout.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]
         )
     )
-    story.append(Spacer(1, 0.25 * cm))
 
-    cv_chart = Image(io.BytesIO(chosen_cv["cv_metrics_plot"]), width=page_width, height=7.5 * cm)
-    cv_chart.hAlign = "CENTER"
-    story.append(cv_chart)
+    story.append(top_layout)
     story.append(PageBreak())
 
-    for fold_name, df_fold in chosen_cv["fold_tables"].items():
+    fold_items = list(chosen_cv["fold_tables"].items())
+    total_folds = len(fold_items)
+
+    for idx, (fold_name, df_fold) in enumerate(fold_items, start=1):
         plot_key = f"{fold_name}_prediction.png"
         error_key = f"{fold_name}_error.png"
+        fold_label = fold_name.replace("_", " ")
 
-        story.append(Paragraph(f"{fold_name.replace('_', ' ')} results", styles["Heading2"]))
-        story.append(Spacer(1, 0.12 * cm))
-        story.append(
-            simple_table_from_df(
-                df_fold,
-                max_rows=18,
-                available_width=page_width,
-                decimals=4,
-                font_size=6.0,
-                header_font_size=6.3,
-            )
+        n_points = len(df_fold)
+        mean_abs_err = float(df_fold["Absolute Error"].mean()) if "Absolute Error" in df_fold.columns else float("nan")
+        mean_pct_err = float(np.nanmean(df_fold["Percent Error"])) if "Percent Error" in df_fold.columns else float("nan")
+
+        fold_table = simple_table_from_df(
+            df_fold,
+            max_rows=18,
+            available_width=page_width,
+            decimals=4,
+            font_size=5.7,
+            header_font_size=6.0,
         )
-        story.append(Spacer(1, 0.22 * cm))
 
-        pred_chart = Image(io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]), width=page_width, height=7.1 * cm)
+        pred_chart = Image(
+            io.BytesIO(chosen_cv["fold_prediction_plots"][plot_key]),
+            width=page_width,
+            height=fold_prediction_height,
+        )
         pred_chart.hAlign = "CENTER"
-        story.append(pred_chart)
+
+        fold_page_one = [
+            Paragraph(f"{fold_label} — validation results", styles["FoldTitle"]),
+            Spacer(1, 0.04 * cm),
+            Paragraph(
+                f"Fold {idx} of {total_folds}. Validation points: {n_points}. "
+                f"Mean absolute error: {mean_abs_err:.4f}. Mean percent error: {mean_pct_err:.4f}%.",
+                styles["FoldSubTitle"],
+            ),
+            Spacer(1, 0.08 * cm),
+            divider(),
+            Spacer(1, 1.0 * cm),
+            fold_table,
+            Spacer(1, 0.10 * cm),
+            pred_chart,
+        ]
+
+        story.append(KeepTogether(fold_page_one))
         story.append(PageBreak())
 
-        story.append(Paragraph(f"{fold_name.replace('_', ' ')} - Percent Error", styles["Heading2"]))
-        story.append(Spacer(1, 0.30 * cm))
-        err_chart = Image(io.BytesIO(chosen_cv["fold_error_plots"][error_key]), width=page_width, height=5.2 * cm)
+        err_chart = Image(
+            io.BytesIO(chosen_cv["fold_error_plots"][error_key]),
+            width=page_width * 0.96,
+            height=fold_error_height,
+        )
         err_chart.hAlign = "CENTER"
-        story.append(err_chart)
+
+        err_chart_box = Table(
+            [[err_chart]],
+            colWidths=[page_width],
+            hAlign="CENTER",
+        )
+        err_chart_box.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+
+        story.append(Paragraph(f"{fold_label} — percent error profile", styles["FoldTitle"]))
+        story.append(Spacer(1, 0.04 * cm))
+        story.append(
+            Paragraph(
+                f"Fold {idx} of {total_folds}. Distribution of percent error across the validation subset.",
+                styles["FoldSubTitle"],
+            )
+        )
+        story.append(Spacer(1, 0.08 * cm))
+        story.append(divider())
+        story.append(Spacer(1, 0.75 * cm))
+        story.append(err_chart_box)
         story.append(PageBreak())
 
     param_df = pd.DataFrame(chosen_cv["parameter_log"])
-    story.append(Paragraph("Kernel parameters and temporary parameter log", styles["Heading2"]))
-    story.append(Spacer(1, 0.15 * cm))
+    story.append(Paragraph("Temporary parameter log", styles["Heading2"]))
+    story.append(Spacer(1, 0.06 * cm))
+    story.append(divider())
+    story.append(Spacer(1, 0.10 * cm))
     story.append(
         simple_table_from_df(
             param_df,
             max_rows=25,
             available_width=page_width,
             decimals=3,
-            font_size=5.8,
-            header_font_size=6.1,
-            justify_cols=["kernel_parameters", "Fitted Kernel", "kernel_name", "Kernel Name"],
+            font_size=5.6,
+            header_font_size=5.9,
+            justify_cols=["Fitted Kernel", "Kernel Name", "kernel_parameters", "Kernel Parameters"],
         )
     )
 
@@ -1061,20 +1538,33 @@ def build_consolidated_pdf(
     external_results_df: pd.DataFrame,
     external_metrics: Dict[str, float],
     external_plot_bytes: bytes,
+    external_error_plot_bytes: bytes,
 ) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
-        rightMargin=1.4 * cm,
-        leftMargin=1.4 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        pagesize=PDF_SETTINGS["pagesize"],
+        rightMargin=PDF_SETTINGS["right_margin_cm"] * cm,
+        leftMargin=PDF_SETTINGS["left_margin_cm"] * cm,
+        topMargin=PDF_SETTINGS["top_margin_cm"] * cm,
+        bottomMargin=PDF_SETTINGS["bottom_margin_cm"] * cm,
     )
+
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Meta", fontName="Helvetica", fontSize=8.7, leading=10.5, alignment=TA_LEFT))
+    styles.add(
+        ParagraphStyle(
+            name="Meta",
+            fontName="Helvetica",
+            fontSize=8.8,
+            leading=10.5,
+            alignment=TA_LEFT,
+        )
+    )
+
     story = []
     page_width = doc.width
+    first_page_table_width = PDF_SETTINGS["first_page_table_width_cm"] * cm
+    first_page_chart_width = page_width - first_page_table_width - (0.35 * cm)
 
     metrics_df = pd.DataFrame(
         {
@@ -1083,60 +1573,94 @@ def build_consolidated_pdf(
                 external_metrics["RMSE"],
                 external_metrics["MAE"],
                 external_metrics["R2"],
-                float(np.nanmean(external_results_df["Percent Error"])) if "Percent Error" in external_results_df.columns else np.nan,
+                float(np.nanmean(external_results_df["Percent Error"]))
+                if "Percent Error" in external_results_df.columns
+                else np.nan,
             ],
         }
     )
 
     story.append(Paragraph("Consolidated Model Report", styles["Title"]))
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.22 * cm))
     story.append(Paragraph(f"Model name: {model_name}", styles["Meta"]))
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
-    story.append(Spacer(1, 0.30 * cm))
+    story.append(Spacer(1, 0.22 * cm))
 
-    story.append(Paragraph("External test metrics", styles["Heading2"]))
-    story.append(
-        simple_table_from_df(
-            metrics_df,
-            max_rows=10,
-            available_width=page_width,
-            decimals=4,
-            font_size=6.8,
-            header_font_size=7.0,
+    story.append(Paragraph("External test metrics and comparison chart", styles["Heading2"]))
+    story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
+
+    metrics_table = simple_table_from_df(
+        metrics_df,
+        max_rows=10,
+        available_width=first_page_table_width,
+        decimals=4,
+        font_size=6.8,
+        header_font_size=7.0,
+    )
+
+    ext_chart = Image(
+        io.BytesIO(external_plot_bytes),
+        width=first_page_chart_width,
+        height=PDF_SETTINGS["consolidated_main_chart_height_cm"] * cm,
+    )
+    ext_chart.hAlign = "CENTER"
+
+    top_layout = Table(
+        [[metrics_table, ext_chart]],
+        colWidths=[first_page_table_width, first_page_chart_width],
+        hAlign="CENTER",
+    )
+    top_layout.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
         )
     )
-    story.append(Spacer(1, 0.25 * cm))
 
-    ext_chart = Image(io.BytesIO(external_plot_bytes), width=page_width, height=7.6 * cm)
-    ext_chart.hAlign = "CENTER"
-    story.append(ext_chart)
+    story.append(top_layout)
+    story.append(Spacer(1, 0.18 * cm))
+
+    story.append(Paragraph("External test percent error", styles["Heading2"]))
+    story.append(Spacer(2, 0.22 * cm))
+    err_chart = Image(
+        io.BytesIO(external_error_plot_bytes),
+        width=page_width,
+        height=PDF_SETTINGS["consolidated_error_chart_height_cm"] * cm,
+    )
+    err_chart.hAlign = "CENTER"
+    story.append(err_chart)
     story.append(PageBreak())
 
     story.append(Paragraph("Cross-validation summary", styles["Heading2"]))
-    story.append(Spacer(1, 0.15 * cm))
+    story.append(Spacer(1, 0.10 * cm))
     story.append(
         simple_table_from_df(
             cv_summary,
             max_rows=10,
             available_width=page_width,
             decimals=4,
-            font_size=6.8,
-            header_font_size=7.0,
+            font_size=6.4,
+            header_font_size=6.7,
         )
     )
     story.append(Spacer(1, 0.25 * cm))
 
     story.append(Paragraph("External test detailed results", styles["Heading2"]))
-    story.append(Spacer(1, 0.15 * cm))
+    story.append(Spacer(1, 0.10 * cm))
     story.append(
         simple_table_from_df(
             external_results_df,
             max_rows=25,
             available_width=page_width,
             decimals=4,
-            font_size=5.9,
-            header_font_size=6.2,
+            font_size=5.8,
+            header_font_size=6.1,
         )
     )
 
@@ -1250,7 +1774,7 @@ def intro_dialog():
         - Reusable Python function, text summary, and serialized model package.
         """
     )
-    if st.button("Initialize Gaussian Model Generator", type="primary", width="stretch"):
+    if st.button("Initialize Gaussian Model Generator", type="primary", use_container_width=True):
         st.session_state["app_initialized"] = True
         add_log("analyzer", "Generator initialized successfully.")
         st.rerun()
@@ -1275,7 +1799,7 @@ def module_database_analyzer():
         st.caption(f"Loaded file: {uploaded.name}")
 
     analyze_disabled = uploaded is None
-    if st.button("Analyze Database", type="primary", width="stretch", disabled=analyze_disabled):
+    if st.button("Analyze Database", type="primary", use_container_width=True, disabled=analyze_disabled):
         try:
             set_module_status("analyzer", "running")
             add_log("analyzer", "Reading Aspen Excel file.")
@@ -1307,7 +1831,7 @@ def module_database_analyzer():
     if st.session_state["raw_df"] is not None:
         raw_df = st.session_state["raw_df"]
         st.write("Detected columns")
-        st.dataframe(pd.DataFrame({"Column": raw_df.columns.astype(str)}), width="stretch", height=220)
+        st.dataframe(pd.DataFrame({"Column": raw_df.columns.astype(str)}), use_container_width=True, height=220)
 
         candidate_options = st.session_state["detected_input_candidates"] or list(raw_df.columns)
         input_selection = st.selectbox(
@@ -1338,23 +1862,13 @@ def module_database_analyzer():
         c3.metric("Erroneous / non-converged", summary["erroneous_runs"])
         c4.metric("Successful [%]", f"{summary['ok_percentage']:.2f}")
 
-        input_confirm = render_yes_no_check_buttons(
-            "Confirm input column selection",
-            "input_confirm",
-            yes_label="âœ” Input confirmed",
-            no_label="âœ– Review input",
-        )
-        output_confirm = render_yes_no_check_buttons(
-            "Confirm output column selection",
-            "output_confirm",
-            yes_label="âœ” Output confirmed",
-            no_label="âœ– Review output",
-        )
+        input_confirm = st.text_input("Confirm input column with Y/N", placeholder="Type Y or N", key="input_confirm")
+        output_confirm = st.text_input("Confirm output column with Y/N", placeholder="Type Y or N", key="output_confirm")
 
         if st.session_state.get("status_column"):
             st.caption(f"Status-based filtering active using column: {st.session_state['status_column']}")
 
-        if st.button("Confirm variable selections", width="stretch"):
+        if st.button("Confirm variable selections", use_container_width=True):
             input_ok = parse_yes_no(input_confirm)
             output_ok = parse_yes_no(output_confirm)
 
@@ -1362,10 +1876,9 @@ def module_database_analyzer():
                 st.session_state["input_column"] = input_selection
                 st.session_state["output_column"] = output_selection
                 st.session_state["analyzer_done"] = True
-                st.session_state["current_step"] = 2
-                st.session_state["current_step_nav"] = 2
                 set_module_status("analyzer", "completed")
                 set_module_status("cleaning", "ready")
+                set_active_step(2, auto_open=True)
 
                 inspection_df = pd.DataFrame([summary])
                 status_info = pd.DataFrame(
@@ -1396,18 +1909,15 @@ def module_database_analyzer():
                 data=st.session_state["artifacts"]["database_inspection_summary.xlsx"],
                 file_name="database_inspection_summary.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
+                use_container_width=True,
             )
 
-        if st.button(
-            "Proceed to Data Cleaning & Preparation",
-            disabled=not st.session_state["analyzer_done"],
-            width="stretch",
+        render_next_step_button(
+            "Open Data Cleaning & Preparation",
+            next_step=2,
+            enabled=st.session_state["analyzer_done"],
             key="proceed_m1",
-        ):
-            st.session_state["current_step"] = 2
-            st.session_state["current_step_nav"] = 2
-            st.rerun()
+        )
 
     render_log("analyzer", "analyzer_log_view")
 
@@ -1425,7 +1935,7 @@ def module_cleaning_preparation():
         render_log("cleaning", "cleaning_log_locked")
         return
 
-    if st.button("Run Data Cleaning & Preparation", type="primary", width="stretch"):
+    if st.button("Run Data Cleaning & Preparation", type="primary", use_container_width=True):
         try:
             set_module_status("cleaning", "running")
             raw_df = st.session_state["raw_df"].copy()
@@ -1461,8 +1971,7 @@ def module_cleaning_preparation():
             st.session_state["train_val_df"] = train_val_df
             st.session_state["external_test_df"] = external_test_df
             st.session_state["cleaning_done"] = True
-            st.session_state["current_step"] = 3
-            st.session_state["current_step_nav"] = 3
+            set_active_step(3, auto_open=True)
 
             st.session_state["artifacts"]["clean_data.xlsx"] = to_excel_bytes({"Clean Data": clean_df})
             st.session_state["artifacts"]["external_data_test.xlsx"] = to_excel_bytes({"External Data Test": external_test_df})
@@ -1489,39 +1998,36 @@ def module_cleaning_preparation():
         c3.metric("External test rows", len(external_test_df))
 
         st.write("Clean dataset preview")
-        st.dataframe(clean_df.head(20), width="stretch")
+        st.dataframe(clean_df.head(20), use_container_width=True)
 
         st.download_button(
             "Download Clean Data",
             data=st.session_state["artifacts"]["clean_data.xlsx"],
             file_name="clean_data.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
         st.download_button(
             "Download External Data Test",
             data=st.session_state["artifacts"]["external_data_test.xlsx"],
             file_name="external_data_test.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
         st.download_button(
             "Download Data Training and Validation Set",
             data=st.session_state["artifacts"]["data_training_validation_set.xlsx"],
             file_name="data_training_validation_set.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
 
-        if st.button(
-            "Proceed to Training & Validation",
-            disabled=not st.session_state["cleaning_done"],
-            width="stretch",
+        render_next_step_button(
+            "Open Training & Validation",
+            next_step=3,
+            enabled=st.session_state["cleaning_done"],
             key="proceed_m2",
-        ):
-            st.session_state["current_step"] = 3
-            st.session_state["current_step_nav"] = 3
-            st.rerun()
+        )
 
     render_log("cleaning", "cleaning_log_view")
 
@@ -1539,18 +2045,81 @@ def module_training_validation():
         render_log("training", "training_log_locked")
         return
 
-    kernel_mode = st.selectbox(
-        "Kernel mode",
-        options=["Matern 2.5 (default)", "RBF benchmark", "Compare Matern vs RBF"],
-    )
-    use_white_kernel = st.checkbox("Use WhiteKernel for explicit noise handling", value=False)
-    alpha_value = st.number_input("Alpha regularization", min_value=1e-10, max_value=1e-2, value=1e-8, format="%.1e")
-    model_name = st.text_input("Model name", value=st.session_state.get("model_name", "PtMeOH_GP_Model"))
-    st.session_state["model_name"] = model_name.strip() or "PtMeOH_GP_Model"
+    left_col, right_col = st.columns([1.0, 1.15], gap="large")
 
-    if st.button("Run Training & Validation", type="primary", width="stretch"):
+    with left_col:
+        kernel_mode = st.selectbox(
+            "Kernel mode",
+            options=["Matern 2.5 (default)", "RBF benchmark", "Compare Matern vs RBF"],
+        )
+        use_white_kernel = st.checkbox("Use WhiteKernel for explicit noise handling", value=False)
+        alpha_value = st.number_input("Alpha regularization", min_value=1e-10, max_value=1e-2, value=1e-8, format="%.1e")
+        model_name = st.text_input("Model name", value=st.session_state.get("model_name", "PtMeOH_GP_Model"))
+        st.session_state["model_name"] = model_name.strip() or "PtMeOH_GP_Model"
+        run_training = st.button(
+            "Run Training & Validation",
+            type="primary",
+            use_container_width=True,
+            disabled=st.session_state.get("training_is_running", False),
+        )
+
+    with right_col:
+        progress_visual = st.empty()
+        progress_bar_box = st.empty()
+
+        status_label = f"{st.session_state.get('training_progress_title', 'Idle')} — {st.session_state.get('training_progress_detail', 'Waiting to start.')}"
+        initial_state = "running" if st.session_state.get("training_is_running", False) else "complete"
+        status_box = st.status(status_label, expanded=True, state=initial_state)
+
+        render_training_progress_widget(
+            progress_visual,
+            percent=st.session_state.get("training_progress_pct", 0),
+            title=st.session_state.get("training_progress_title", "Idle"),
+            detail=st.session_state.get("training_progress_detail", "Waiting to start."),
+            fold_idx=st.session_state.get("training_progress_fold", 0),
+            total_folds=st.session_state.get("training_progress_total_folds", 5),
+            live_metrics=st.session_state.get("training_live_metrics", {}),
+        )
+        progress_bar_box.progress(
+            st.session_state.get("training_progress_pct", 0) / 100.0,
+            text=st.session_state.get("training_progress_detail", "Waiting to start."),
+        )
+
+        live = st.session_state.get("training_live_metrics", {})
+        if live:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Live RMSE", f"{live.get('RMSE', np.nan):.4f}")
+            m2.metric("Live MAE", f"{live.get('MAE', np.nan):.4f}")
+            r2_val = live.get("R2", np.nan)
+            m3.metric("Live R²", "nan" if pd.isna(r2_val) else f"{r2_val:.4f}")
+
+    if run_training:
         try:
             set_module_status("training", "running")
+            st.session_state["training_is_running"] = True
+            st.session_state["training_progress_pct"] = 0
+            st.session_state["training_progress_title"] = "Training initialized"
+            st.session_state["training_progress_detail"] = "Preparing training-validation dataset."
+            st.session_state["training_progress_fold"] = 0
+            st.session_state["training_progress_total_folds"] = 5
+            st.session_state["training_live_metrics"] = {}
+
+            def progress_callback(percent, title, detail, fold_idx=0, total_folds=5):
+                smooth_progress(
+                    progress_visual,
+                    progress_bar_box,
+                    status_box,
+                    target_percent=percent,
+                    title=title,
+                    detail=detail,
+                    fold_idx=fold_idx,
+                    total_folds=total_folds,
+                    state="running",
+                    delay=0.012,
+                )
+
+            progress_callback(1, "Training initialized", "Preparing training-validation dataset.", 0)
+
             add_log("training", "Starting 5-fold cross-validation.")
             df = st.session_state["train_val_df"].copy()
             input_col = st.session_state["input_column"]
@@ -1560,14 +2129,61 @@ def module_training_validation():
                 raise ValueError("The training-validation dataset must contain at least 5 rows for 5-fold CV.")
 
             comparison_df = None
+
             if kernel_mode == "Matern 2.5 (default)":
-                chosen_cv = perform_cv(df, input_col, output_col, "Matern 2.5", use_white_kernel, alpha_value)
+                chosen_cv = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "Matern 2.5",
+                    use_white_kernel,
+                    alpha_value,
+                    progress_callback=progress_callback,
+                    progress_range=(2, 90),
+                    phase_label="Matern 2.5 CV",
+                )
             elif kernel_mode == "RBF benchmark":
-                chosen_cv = perform_cv(df, input_col, output_col, "RBF", use_white_kernel, alpha_value)
+                chosen_cv = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "RBF",
+                    use_white_kernel,
+                    alpha_value,
+                    progress_callback=progress_callback,
+                    progress_range=(2, 90),
+                    phase_label="RBF CV",
+                )
             else:
                 add_log("training", "Running kernel comparison between Matern 2.5 and RBF.")
-                result_matern = perform_cv(df, input_col, output_col, "Matern 2.5", use_white_kernel, alpha_value, enable_logs=False)
-                result_rbf = perform_cv(df, input_col, output_col, "RBF", use_white_kernel, alpha_value, enable_logs=False)
+
+                result_matern = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "Matern 2.5",
+                    use_white_kernel,
+                    alpha_value,
+                    enable_logs=False,
+                    progress_callback=progress_callback,
+                    progress_range=(2, 45),
+                    phase_label="Matern benchmark",
+                )
+
+                result_rbf = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "RBF",
+                    use_white_kernel,
+                    alpha_value,
+                    enable_logs=False,
+                    progress_callback=progress_callback,
+                    progress_range=(46, 89),
+                    phase_label="RBF benchmark",
+                )
+
+                progress_callback(90, "Kernel comparison", "Aggregating benchmark results and selecting the best kernel.", 0)
 
                 comparison_df = pd.DataFrame(
                     [
@@ -1588,11 +2204,19 @@ def module_training_validation():
                 chosen_cv = select_best_cv_result(result_matern, result_rbf)
                 add_log("training", f"Kernel comparison completed. Selected kernel: {chosen_cv['kernel_name']}.")
 
+            progress_callback(93, "Final training", "Retraining production model on the full development dataset.", 0)
+
             final_model = GaussianSurrogate1D(
                 kernel_name=chosen_cv["kernel_name"],
                 use_white_kernel=use_white_kernel,
                 alpha=alpha_value,
-            ).fit(df[[input_col]].to_numpy(), df[output_col].to_numpy())
+            )
+
+            progress_callback(96, "Final training", "Fitting final production Gaussian Process.", 0)
+            final_model.fit(df[[input_col]].to_numpy(), df[output_col].to_numpy())
+
+            st.session_state["training_live_metrics"] = {}
+            progress_callback(98, "Packaging artifacts", "Generating reports, model bundle, and downloadable assets.", 0)
 
             model_bundle = final_model.export_bundle(
                 model_name=st.session_state["model_name"],
@@ -1666,24 +2290,29 @@ def module_training_validation():
                 st.session_state["artifacts"][name] = data
 
             st.session_state["training_done"] = True
-            st.session_state["current_step"] = 4
-            st.session_state["current_step_nav"] = 4
+            set_active_step(4, auto_open=True)
+            st.session_state["training_is_running"] = False
             set_module_status("training", "completed")
             set_module_status("testing", "ready")
             add_log("training", "Final production model retrained on the full training-validation dataset.")
             add_log("training", "Training & Validation module completed successfully.")
+
+            progress_callback(100, "Training completed", "Cross-validation and final retraining finished successfully.", 5)
+            status_box.update(label="Training completed successfully.", state="complete", expanded=False)
             st.rerun()
         except Exception as exc:
+            st.session_state["training_is_running"] = False
+            status_box.update(label=f"Training failed: {exc}", state="error", expanded=True)
             set_module_status("training", "error")
             add_log("training", f"Training & Validation failed: {exc}")
 
     if st.session_state["training_done"]:
         st.write("Cross-validation summary")
-        st.dataframe(st.session_state["cv_summary"], width="stretch")
+        st.dataframe(st.session_state["cv_summary"], use_container_width=True)
 
         if st.session_state["cv_comparison"] is not None:
             st.write("Kernel comparison")
-            st.dataframe(st.session_state["cv_comparison"], width="stretch")
+            st.dataframe(st.session_state["cv_comparison"], use_container_width=True)
 
         st.image(st.session_state["artifacts"]["cv_metrics_plot.png"], caption="5-fold CV metrics")
 
@@ -1692,32 +2321,29 @@ def module_training_validation():
             data=st.session_state["artifacts"]["training_validation_report.pdf"],
             file_name="training_validation_report.pdf",
             mime="application/pdf",
-            width="stretch",
+            use_container_width=True,
         )
         st.download_button(
             "Download Consolidated CV Results (Excel)",
             data=st.session_state["artifacts"]["cv_results.xlsx"],
             file_name="cv_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
         st.download_button(
             "Download Model Parameters (Excel)",
             data=st.session_state["artifacts"]["model_parameters.xlsx"],
             file_name="model_parameters.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
 
-        if st.button(
-            "Proceed to Test & Packing",
-            disabled=not st.session_state["training_done"],
-            width="stretch",
+        render_next_step_button(
+            "Open Test & Packing",
+            next_step=4,
+            enabled=st.session_state["training_done"],
             key="proceed_m3",
-        ):
-            st.session_state["current_step"] = 4
-            st.session_state["current_step_nav"] = 4
-            st.rerun()
+        )
 
     render_log("training", "training_log_view")
 
@@ -1736,14 +2362,12 @@ def module_test_packing():
         return
 
     generate_consolidated_pdf = st.checkbox("Generate final consolidated PDF report", value=True)
-    satisfaction = render_yes_no_check_buttons(
-        "Model approval decision",
-        "satisfaction",
-        yes_label="âœ” Approve model",
-        no_label="âœ– Reject model",
+    satisfaction = st.text_input(
+        "Are you satisfied with the model performance? (Yes/No)",
+        placeholder="Type Yes or No",
     )
 
-    if st.button("Run External Test & Packing", type="primary", width="stretch"):
+    if st.button("Run External Test & Packing", type="primary", use_container_width=True):
         try:
             set_module_status("testing", "running")
             add_log("testing", "Starting external test evaluation.")
@@ -1810,6 +2434,7 @@ def module_test_packing():
                     results_df,
                     metrics,
                     external_plot,
+                    external_error_plot,
                 )
 
             decision = parse_yes_no(satisfaction)
@@ -1838,6 +2463,8 @@ def module_test_packing():
                     "cv_results.xlsx": st.session_state["artifacts"]["cv_results.xlsx"],
                     "training_validation_report.pdf": st.session_state["artifacts"]["training_validation_report.pdf"],
                     "external_test_results.xlsx": st.session_state["artifacts"]["external_test_results.xlsx"],
+                    "external_test_plot.png": st.session_state["artifacts"]["external_test_plot.png"],
+                    "external_test_error_plot.png": st.session_state["artifacts"]["external_test_error_plot.png"],
                 }
                 if "consolidated_model_report.pdf" in st.session_state["artifacts"]:
                     extras["consolidated_model_report.pdf"] = st.session_state["artifacts"]["consolidated_model_report.pdf"]
@@ -1863,7 +2490,7 @@ def module_test_packing():
 
             st.session_state["testing_done"] = True
             set_module_status("testing", "completed")
-            add_log("testing", f"External test completed. RMSE={metrics['RMSE']:.6f}, MAE={metrics['MAE']:.6f}, RÂ²={metrics['R2']:.6f}.")
+            add_log("testing", f"External test completed. RMSE={metrics['RMSE']:.6f}, MAE={metrics['MAE']:.6f}, R²={metrics['R2']:.6f}.")
             st.rerun()
         except Exception as exc:
             set_module_status("testing", "error")
@@ -1876,23 +2503,23 @@ def module_test_packing():
         c1, c2, c3 = st.columns(3)
         c1.metric("RMSE", f"{metrics['RMSE']:.6f}")
         c2.metric("MAE", f"{metrics['MAE']:.6f}")
-        c3.metric("RÂ²", f"{metrics['R2']:.6f}")
+        c3.metric("R²", f"{metrics['R2']:.6f}")
 
         st.image(st.session_state["artifacts"]["external_test_plot.png"], caption="External test comparison")
-        st.image(st.session_state["artifacts"]["external_test_error_plot.png"], caption="External test absolute error")
+        st.image(st.session_state["artifacts"]["external_test_error_plot.png"], caption="External test percent error")
 
         st.write("Comparison table")
-        st.dataframe(results_pack["comparison_df"], width="stretch")
+        st.dataframe(results_pack["comparison_df"], use_container_width=True)
 
         st.write("Error table")
-        st.dataframe(results_pack["error_df"], width="stretch")
+        st.dataframe(results_pack["error_df"], use_container_width=True)
 
         st.download_button(
             "Download External Test Results (Excel)",
             data=st.session_state["artifacts"]["external_test_results.xlsx"],
             file_name="external_test_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            use_container_width=True,
         )
 
         if "consolidated_model_report.pdf" in st.session_state["artifacts"]:
@@ -1901,7 +2528,7 @@ def module_test_packing():
                 data=st.session_state["artifacts"]["consolidated_model_report.pdf"],
                 file_name="consolidated_model_report.pdf",
                 mime="application/pdf",
-                width="stretch",
+                use_container_width=True,
             )
 
         if st.session_state["final_approved"]:
@@ -1911,22 +2538,20 @@ def module_test_packing():
                 data=st.session_state["artifacts"]["final_model_package.zip"],
                 file_name="final_model_package.zip",
                 mime="application/zip",
-                width="stretch",
+                use_container_width=True,
             )
         else:
             st.warning("Model not approved yet.")
             st.write("Suspicious runs with the highest absolute error")
-            st.dataframe(st.session_state["suspicious_points"], width="stretch")
+            st.dataframe(st.session_state["suspicious_points"], use_container_width=True)
 
             st.write("Suggested countermeasures")
             for item in st.session_state["diagnostics_text"]:
                 st.markdown(f"- {item}")
 
-            restart_choice = render_yes_no_check_buttons(
-                "Restart the full generator with a new Aspen database?",
-                "restart_choice",
-                yes_label="âœ” Restart workflow",
-                no_label="âœ– Keep current results",
+            restart_choice = st.text_input(
+                "Do you want to restart the full generator with a new Aspen database? (Yes/No)",
+                key="restart_choice",
             )
             if parse_yes_no(restart_choice) is True:
                 reset_workflow()
@@ -1938,7 +2563,7 @@ def render_final_sidebar():
     with st.sidebar:
         st.header("Final Download Center")
 
-        if st.button("Reset workflow", width="stretch"):
+        if st.button("Reset workflow", use_container_width=True):
             reset_workflow()
 
         if not st.session_state["testing_done"]:
@@ -1978,7 +2603,7 @@ def render_final_sidebar():
                     data=st.session_state["artifacts"][name],
                     file_name=name,
                     mime=mime,
-                    width="stretch",
+                    use_container_width=True,
                     key=f"sidebar_{name}",
                 )
 
@@ -1995,12 +2620,8 @@ def main():
     render_final_sidebar()
 
     tabs = st.tabs(
-        [
-            "1. Database Analyzer",
-            "2. Data Cleaning & Preparation",
-            "3. Training & Validation",
-            "4. Test & Packing",
-        ]
+        TAB_LABELS,
+        default=st.session_state.get("active_tab", TAB_LABELS[0]),
     )
 
     with tabs[0]:
