@@ -65,12 +65,12 @@ PDF_SETTINGS = {
     "section_gap_cm": 0.35,
     "small_gap_cm": 1,
     "table_chart_gap_cm": 1.0,
-    "first_page_table_width_cm": 5,
+    "first_page_table_width_cm": 4.0,
     "training_cv_chart_height_cm": 7.5,
-    "training_prediction_chart_height_cm": 11.0,
+    "training_prediction_chart_height_cm": 14.0,
     "training_error_chart_height_cm": 9.0,
     "consolidated_main_chart_height_cm": 8.0,
-    "consolidated_error_chart_height_cm": 12.5,
+    "consolidated_error_chart_height_cm": 13.5,
 }
 
 plt.rcParams.update(
