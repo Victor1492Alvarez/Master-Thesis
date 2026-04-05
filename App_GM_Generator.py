@@ -55,8 +55,8 @@ PDF_SETTINGS = {
     "small_gap_cm": 1,
     "table_chart_gap_cm": 1.0,
     "first_page_table_width_cm": 5,
-    "training_cv_chart_height_cm": 7.0,
-    "training_prediction_chart_height_cm": 10.50,
+    "training_cv_chart_height_cm": 7.5,
+    "training_prediction_chart_height_cm": 11.0,
     "training_error_chart_height_cm": 9.0,
     "consolidated_main_chart_height_cm": 8.7,
     "consolidated_error_chart_height_cm": 9.0,
@@ -971,7 +971,7 @@ def build_training_pdf(
     story.append(Paragraph(f"Input variable: {input_col}", styles["Meta"]))
     story.append(Paragraph(f"Output variable: {output_col}", styles["Meta"]))
     story.append(Paragraph(f"Selected kernel: {chosen_cv['kernel_name']}", styles["Meta"]))
-    story.append(Spacer(1, 1* cm))
+    story.append(Spacer(1, 0,22 * cm))
 
     if comparison_df is not None and not comparison_df.empty:
         story.append(Paragraph("Kernel comparison", styles["Heading2"]))
@@ -986,7 +986,6 @@ def build_training_pdf(
             )
         )
         story.append(Spacer(1, PDF_SETTINGS["section_gap_cm"] * cm))
-    story.append(Spacer(1, 1 * cm))
     story.append(Paragraph("Cross-validation summary and metrics chart", styles["Heading2"]))
     story.append(Spacer(1, PDF_SETTINGS["small_gap_cm"] * cm))
 
@@ -1024,7 +1023,6 @@ def build_training_pdf(
     )
 
     story.append(top_layout)
-    story.append(PageBreak())
 
     for fold_name, df_fold in chosen_cv["fold_tables"].items():
         plot_key = f"{fold_name}_prediction.png"
