@@ -71,7 +71,7 @@ PLOT_SETTINGS = {
 }
 
 PDF_SETTINGS = {
-    "pagesize": landscape(A4),
+    "pagesize": A4,
     "left_margin_cm": 1.2,
     "right_margin_cm": 1.2,
     "top_margin_cm": 1.1,
