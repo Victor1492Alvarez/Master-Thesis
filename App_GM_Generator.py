@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import joblib
 import matplotlib
@@ -20,7 +21,17 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (
+    HRFlowable,
+    Image,
+    KeepTogether,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF, WhiteKernel
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -197,6 +208,13 @@ def init_state() -> None:
         "diagnostics_text": [],
         "final_approved": False,
         "artifacts": {},
+        "training_progress_pct": 0,
+        "training_progress_title": "Idle",
+        "training_progress_detail": "Waiting to start.",
+        "training_progress_fold": 0,
+        "training_progress_total_folds": 5,
+        "training_live_metrics": {},
+        "training_is_running": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -281,10 +299,246 @@ def inject_styles() -> None:
             color: #444;
             margin-bottom: 0.8rem;
         }
+        .train-progress-card {
+            border: 1px solid #111;
+            border-radius: 1rem;
+            padding: 1rem 1.1rem;
+            background:
+                radial-gradient(circle at top left, rgba(120,160,255,0.10), transparent 34%),
+                linear-gradient(180deg, #ffffff 0%, #f6f8fc 100%);
+            box-shadow: 0 10px 30px rgba(10, 20, 40, 0.06);
+            margin-bottom: 0.8rem;
+        }
+        .train-progress-grid {
+            display: grid;
+            grid-template-columns: 170px 1fr;
+            gap: 1rem;
+            align-items: center;
+        }
+        .train-ring-wrap {
+            position: relative;
+            width: 160px;
+            height: 160px;
+            margin: 0 auto;
+        }
+        .train-ring-svg {
+            width: 160px;
+            height: 160px;
+            transform: rotate(-90deg);
+            overflow: visible;
+        }
+        .train-ring-track {
+            fill: none;
+            stroke: #d9dfeb;
+            stroke-width: 10;
+        }
+        .train-ring-value {
+            fill: none;
+            stroke: url(#trainRingGradient);
+            stroke-width: 10;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 260ms ease;
+            filter: drop-shadow(0 0 8px rgba(73, 120, 255, 0.20));
+        }
+        .train-ring-orbit {
+            position: absolute;
+            inset: 10px;
+            border-radius: 50%;
+            border: 1px dashed rgba(30, 50, 90, 0.18);
+            animation: train-spin 8s linear infinite;
+        }
+        .train-ring-center {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .train-progress-pct {
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            line-height: 1;
+            color: #0f172a;
+        }
+        .train-progress-mini {
+            font-size: 0.72rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #475569;
+            margin-top: 0.2rem;
+        }
+        .train-progress-title {
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #0f172a;
+            margin-bottom: 0.25rem;
+        }
+        .train-progress-detail {
+            color: #334155;
+            margin-bottom: 0.45rem;
+            line-height: 1.45;
+        }
+        .train-progress-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+        }
+        .train-chip {
+            display: inline-block;
+            border: 1px solid #111;
+            border-radius: 999px;
+            padding: 0.22rem 0.6rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            background: #fff;
+            color: #111;
+        }
+        @keyframes train-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_training_progress_widget(
+    container,
+    percent: int,
+    title: str,
+    detail: str,
+    fold_idx: int = 0,
+    total_folds: int = 5,
+    live_metrics: Optional[Dict[str, float]] = None,
+):
+    percent = max(0, min(100, int(percent)))
+    radius = 54
+    circumference = 2 * np.pi * radius
+    offset = circumference * (1 - percent / 100.0)
+    fold_text = f"Fold {fold_idx}/{total_folds}" if fold_idx > 0 else "Preparing"
+
+    metrics_html = ""
+    if live_metrics:
+        rmse = live_metrics.get("RMSE")
+        mae = live_metrics.get("MAE")
+        r2 = live_metrics.get("R2")
+        chips = []
+        if rmse is not None:
+            chips.append(f"<span class='train-chip'>RMSE {rmse:.4f}</span>")
+        if mae is not None:
+            chips.append(f"<span class='train-chip'>MAE {mae:.4f}</span>")
+        if r2 is not None and not pd.isna(r2):
+            chips.append(f"<span class='train-chip'>R² {r2:.4f}</span>")
+        metrics_html = "".join(chips)
+
+    container.markdown(
+        f"""
+        <div class="train-progress-card">
+            <div class="train-progress-grid">
+                <div class="train-ring-wrap">
+                    <div class="train-ring-orbit"></div>
+                    <svg class="train-ring-svg" viewBox="0 0 140 140">
+                        <defs>
+                            <linearGradient id="trainRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#0f172a"/>
+                                <stop offset="55%" stop-color="#2563eb"/>
+                                <stop offset="100%" stop-color="#7c3aed"/>
+                            </linearGradient>
+                        </defs>
+                        <circle class="train-ring-track" cx="70" cy="70" r="{radius}"></circle>
+                        <circle
+                            class="train-ring-value"
+                            cx="70" cy="70" r="{radius}"
+                            stroke-dasharray="{circumference:.2f}"
+                            stroke-dashoffset="{offset:.2f}">
+                        </circle>
+                    </svg>
+                    <div class="train-ring-center">
+                        <div class="train-progress-pct">{percent}%</div>
+                        <div class="train-progress-mini">training</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="train-progress-title">{title}</div>
+                    <div class="train-progress-detail">{detail}</div>
+                    <div class="train-progress-meta">
+                        <span class="train-chip">{fold_text}</span>
+                        <span class="train-chip">{percent}% completed</span>
+                        {metrics_html}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def update_training_progress(
+    visual_placeholder,
+    native_bar,
+    status_box,
+    percent: int,
+    title: str,
+    detail: str,
+    fold_idx: int = 0,
+    total_folds: int = 5,
+    state: str = "running",
+):
+    percent = max(0, min(100, int(percent)))
+    st.session_state["training_progress_pct"] = percent
+    st.session_state["training_progress_title"] = title
+    st.session_state["training_progress_detail"] = detail
+    st.session_state["training_progress_fold"] = fold_idx
+    st.session_state["training_progress_total_folds"] = total_folds
+
+    render_training_progress_widget(
+        visual_placeholder,
+        percent=percent,
+        title=title,
+        detail=detail,
+        fold_idx=fold_idx,
+        total_folds=total_folds,
+        live_metrics=st.session_state.get("training_live_metrics", {}),
+    )
+    native_bar.progress(percent / 100.0, text=f"{title} — {detail}")
+    if status_box is not None:
+        status_box.update(label=f"{title} — {detail}", state=state, expanded=True)
+
+
+def smooth_progress(
+    visual_placeholder,
+    native_bar,
+    status_box,
+    target_percent: int,
+    title: str,
+    detail: str,
+    fold_idx: int = 0,
+    total_folds: int = 5,
+    state: str = "running",
+    delay: float = 0.012,
+):
+    current = int(st.session_state.get("training_progress_pct", 0))
+    target = max(0, min(100, int(target_percent)))
+    if target < current:
+        current = target
+    for pct in range(current, target + 1):
+        update_training_progress(
+            visual_placeholder,
+            native_bar,
+            status_box,
+            percent=pct,
+            title=title,
+            detail=detail,
+            fold_idx=fold_idx,
+            total_folds=total_folds,
+            state=state,
+        )
+        time.sleep(delay)
 
 
 def render_header() -> None:
@@ -744,6 +998,9 @@ def perform_cv(
     use_white_kernel: bool,
     alpha_value: float,
     enable_logs: bool = True,
+    progress_callback: Optional[Callable] = None,
+    progress_range: Tuple[int, int] = (1, 90),
+    phase_label: str = "Cross-validation",
 ) -> Dict:
     if len(df) < 5:
         raise ValueError("At least 5 rows are required in the training-validation dataset for 5-fold CV.")
@@ -761,22 +1018,51 @@ def perform_cv(
     fold_prediction_plots = {}
     fold_error_plots = {}
 
+    total_folds = 5
+    start_pct, end_pct = progress_range
+
+    def emit(pct: int, title: str, detail: str, fold_idx: int = 0):
+        if progress_callback is not None:
+            progress_callback(int(pct), title, detail, fold_idx, total_folds)
+
+    emit(start_pct, f"{phase_label} initialized", "Preparing 5-fold workflow.", 0)
+
     for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X), start=1):
+        fold_span = (end_pct - start_pct) / total_folds
+        fold_start = start_pct + (fold_idx - 1) * fold_span
+        fold_end = start_pct + fold_idx * fold_span
+
+        emit(round(fold_start + 1), f"{phase_label} — Fold {fold_idx}", "Preparing split.", fold_idx)
+
         if enable_logs:
             add_log("training", f"Fold {fold_idx}/5 started using kernel {kernel_name}.")
 
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
+        emit(round(fold_start + 4), f"{phase_label} — Fold {fold_idx}", "Building Gaussian Process model.", fold_idx)
+
         model = GaussianSurrogate1D(
             kernel_name=kernel_name,
             use_white_kernel=use_white_kernel,
             alpha=alpha_value,
-        ).fit(X_train, y_train)
+        )
 
+        emit(round(fold_start + 8), f"{phase_label} — Fold {fold_idx}", "Training model on fold subset.", fold_idx)
+        model.fit(X_train, y_train)
+
+        emit(round(fold_start + 12), f"{phase_label} — Fold {fold_idx}", "Generating validation predictions.", fold_idx)
         y_pred, y_std = model.predict(X_val, return_std=True)
+
+        emit(round(fold_start + 14), f"{phase_label} — Fold {fold_idx}", "Computing metrics and error profile.", fold_idx)
         metrics = compute_metrics(y_val, y_pred)
         percent_error = safe_percent_error(y_val, y_pred)
+
+        st.session_state["training_live_metrics"] = {
+            "RMSE": metrics["RMSE"],
+            "MAE": metrics["MAE"],
+            "R2": metrics["R2"],
+        }
 
         fold_df = pd.DataFrame(
             {
@@ -788,6 +1074,8 @@ def perform_cv(
                 "Percent Error": percent_error,
             }
         ).sort_values(input_col).reset_index(drop=True)
+
+        emit(round(fold_start + 16), f"{phase_label} — Fold {fold_idx}", "Rendering fold charts.", fold_idx)
 
         parameter_log.append(
             {
@@ -823,6 +1111,8 @@ def perform_cv(
             input_col,
             f"Fold {fold_idx}: Percent Error",
         )
+
+        emit(round(fold_end), f"{phase_label} — Fold {fold_idx}", "Fold completed successfully.", fold_idx)
 
         if enable_logs:
             add_log(
@@ -938,6 +1228,7 @@ def build_text_summary(
             ]
         )
     return "\n".join(lines)
+
 
 def build_training_pdf(
     model_name: str,
@@ -1168,10 +1459,7 @@ def build_training_pdf(
         story.append(Spacer(1, 0.75 * cm))
         story.append(err_chart_box)
 
-        if idx < total_folds:
-            story.append(PageBreak())
-        else:
-            story.append(PageBreak())
+        story.append(PageBreak())
 
     param_df = pd.DataFrame(chosen_cv["parameter_log"])
     story.append(Paragraph("Temporary parameter log", styles["Heading2"]))
@@ -1193,7 +1481,8 @@ def build_training_pdf(
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
-    
+
+
 def build_consolidated_pdf(
     model_name: str,
     input_col: str,
@@ -1713,18 +2002,81 @@ def module_training_validation():
         render_log("training", "training_log_locked")
         return
 
-    kernel_mode = st.selectbox(
-        "Kernel mode",
-        options=["Matern 2.5 (default)", "RBF benchmark", "Compare Matern vs RBF"],
-    )
-    use_white_kernel = st.checkbox("Use WhiteKernel for explicit noise handling", value=False)
-    alpha_value = st.number_input("Alpha regularization", min_value=1e-10, max_value=1e-2, value=1e-8, format="%.1e")
-    model_name = st.text_input("Model name", value=st.session_state.get("model_name", "PtMeOH_GP_Model"))
-    st.session_state["model_name"] = model_name.strip() or "PtMeOH_GP_Model"
+    left_col, right_col = st.columns([1.0, 1.15], gap="large")
 
-    if st.button("Run Training & Validation", type="primary", use_container_width=True):
+    with left_col:
+        kernel_mode = st.selectbox(
+            "Kernel mode",
+            options=["Matern 2.5 (default)", "RBF benchmark", "Compare Matern vs RBF"],
+        )
+        use_white_kernel = st.checkbox("Use WhiteKernel for explicit noise handling", value=False)
+        alpha_value = st.number_input("Alpha regularization", min_value=1e-10, max_value=1e-2, value=1e-8, format="%.1e")
+        model_name = st.text_input("Model name", value=st.session_state.get("model_name", "PtMeOH_GP_Model"))
+        st.session_state["model_name"] = model_name.strip() or "PtMeOH_GP_Model"
+        run_training = st.button(
+            "Run Training & Validation",
+            type="primary",
+            use_container_width=True,
+            disabled=st.session_state.get("training_is_running", False),
+        )
+
+    with right_col:
+        progress_visual = st.empty()
+        progress_bar_box = st.empty()
+
+        status_label = f"{st.session_state.get('training_progress_title', 'Idle')} — {st.session_state.get('training_progress_detail', 'Waiting to start.')}"
+        initial_state = "running" if st.session_state.get("training_is_running", False) else "complete"
+        status_box = st.status(status_label, expanded=True, state=initial_state)
+
+        render_training_progress_widget(
+            progress_visual,
+            percent=st.session_state.get("training_progress_pct", 0),
+            title=st.session_state.get("training_progress_title", "Idle"),
+            detail=st.session_state.get("training_progress_detail", "Waiting to start."),
+            fold_idx=st.session_state.get("training_progress_fold", 0),
+            total_folds=st.session_state.get("training_progress_total_folds", 5),
+            live_metrics=st.session_state.get("training_live_metrics", {}),
+        )
+        progress_bar_box.progress(
+            st.session_state.get("training_progress_pct", 0) / 100.0,
+            text=st.session_state.get("training_progress_detail", "Waiting to start."),
+        )
+
+        live = st.session_state.get("training_live_metrics", {})
+        if live:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Live RMSE", f"{live.get('RMSE', np.nan):.4f}")
+            m2.metric("Live MAE", f"{live.get('MAE', np.nan):.4f}")
+            r2_val = live.get("R2", np.nan)
+            m3.metric("Live R²", "nan" if pd.isna(r2_val) else f"{r2_val:.4f}")
+
+    if run_training:
         try:
             set_module_status("training", "running")
+            st.session_state["training_is_running"] = True
+            st.session_state["training_progress_pct"] = 0
+            st.session_state["training_progress_title"] = "Training initialized"
+            st.session_state["training_progress_detail"] = "Preparing training-validation dataset."
+            st.session_state["training_progress_fold"] = 0
+            st.session_state["training_progress_total_folds"] = 5
+            st.session_state["training_live_metrics"] = {}
+
+            def progress_callback(percent, title, detail, fold_idx=0, total_folds=5):
+                smooth_progress(
+                    progress_visual,
+                    progress_bar_box,
+                    status_box,
+                    target_percent=percent,
+                    title=title,
+                    detail=detail,
+                    fold_idx=fold_idx,
+                    total_folds=total_folds,
+                    state="running",
+                    delay=0.012,
+                )
+
+            progress_callback(1, "Training initialized", "Preparing training-validation dataset.", 0)
+
             add_log("training", "Starting 5-fold cross-validation.")
             df = st.session_state["train_val_df"].copy()
             input_col = st.session_state["input_column"]
@@ -1734,14 +2086,61 @@ def module_training_validation():
                 raise ValueError("The training-validation dataset must contain at least 5 rows for 5-fold CV.")
 
             comparison_df = None
+
             if kernel_mode == "Matern 2.5 (default)":
-                chosen_cv = perform_cv(df, input_col, output_col, "Matern 2.5", use_white_kernel, alpha_value)
+                chosen_cv = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "Matern 2.5",
+                    use_white_kernel,
+                    alpha_value,
+                    progress_callback=progress_callback,
+                    progress_range=(2, 90),
+                    phase_label="Matern 2.5 CV",
+                )
             elif kernel_mode == "RBF benchmark":
-                chosen_cv = perform_cv(df, input_col, output_col, "RBF", use_white_kernel, alpha_value)
+                chosen_cv = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "RBF",
+                    use_white_kernel,
+                    alpha_value,
+                    progress_callback=progress_callback,
+                    progress_range=(2, 90),
+                    phase_label="RBF CV",
+                )
             else:
                 add_log("training", "Running kernel comparison between Matern 2.5 and RBF.")
-                result_matern = perform_cv(df, input_col, output_col, "Matern 2.5", use_white_kernel, alpha_value, enable_logs=False)
-                result_rbf = perform_cv(df, input_col, output_col, "RBF", use_white_kernel, alpha_value, enable_logs=False)
+
+                result_matern = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "Matern 2.5",
+                    use_white_kernel,
+                    alpha_value,
+                    enable_logs=False,
+                    progress_callback=progress_callback,
+                    progress_range=(2, 45),
+                    phase_label="Matern benchmark",
+                )
+
+                result_rbf = perform_cv(
+                    df,
+                    input_col,
+                    output_col,
+                    "RBF",
+                    use_white_kernel,
+                    alpha_value,
+                    enable_logs=False,
+                    progress_callback=progress_callback,
+                    progress_range=(46, 89),
+                    phase_label="RBF benchmark",
+                )
+
+                progress_callback(90, "Kernel comparison", "Aggregating benchmark results and selecting the best kernel.", 0)
 
                 comparison_df = pd.DataFrame(
                     [
@@ -1762,11 +2161,19 @@ def module_training_validation():
                 chosen_cv = select_best_cv_result(result_matern, result_rbf)
                 add_log("training", f"Kernel comparison completed. Selected kernel: {chosen_cv['kernel_name']}.")
 
+            progress_callback(93, "Final training", "Retraining production model on the full development dataset.", 0)
+
             final_model = GaussianSurrogate1D(
                 kernel_name=chosen_cv["kernel_name"],
                 use_white_kernel=use_white_kernel,
                 alpha=alpha_value,
-            ).fit(df[[input_col]].to_numpy(), df[output_col].to_numpy())
+            )
+
+            progress_callback(96, "Final training", "Fitting final production Gaussian Process.", 0)
+            final_model.fit(df[[input_col]].to_numpy(), df[output_col].to_numpy())
+
+            st.session_state["training_live_metrics"] = {}
+            progress_callback(98, "Packaging artifacts", "Generating reports, model bundle, and downloadable assets.", 0)
 
             model_bundle = final_model.export_bundle(
                 model_name=st.session_state["model_name"],
@@ -1841,12 +2248,18 @@ def module_training_validation():
 
             st.session_state["training_done"] = True
             st.session_state["current_step"] = 4
+            st.session_state["training_is_running"] = False
             set_module_status("training", "completed")
             set_module_status("testing", "ready")
             add_log("training", "Final production model retrained on the full training-validation dataset.")
             add_log("training", "Training & Validation module completed successfully.")
+
+            progress_callback(100, "Training completed", "Cross-validation and final retraining finished successfully.", 5)
+            status_box.update(label="Training completed successfully.", state="complete", expanded=False)
             st.rerun()
         except Exception as exc:
+            st.session_state["training_is_running"] = False
+            status_box.update(label=f"Training failed: {exc}", state="error", expanded=True)
             set_module_status("training", "error")
             add_log("training", f"Training & Validation failed: {exc}")
 
