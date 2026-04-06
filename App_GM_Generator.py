@@ -942,8 +942,16 @@ def create_prediction_plot(
     if uncertainty_col and uncertainty_col in ordered.columns:
         lower = ordered["Prediction"] - 1.96 * ordered[uncertainty_col]
         upper = ordered["Prediction"] + 1.96 * ordered[uncertainty_col]
-        ax.fill_between(ordered[input_col], lower, upper, color="0.82", alpha=1.0, label="95% interval")
-
+        ax.fill_between(
+            ordered[input_col],
+            lower,
+            upper,
+            color="gray",
+            alpha=0.22,
+            linewidth=0,
+            zorder=1,
+            label="95% interval",
+        )
     ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"])
     ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
