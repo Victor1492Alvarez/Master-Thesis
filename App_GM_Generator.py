@@ -1006,9 +1006,6 @@ def create_cv_metrics_plot(metrics_df: pd.DataFrame) -> bytes:
 def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, output_col: str) -> bytes:
     ordered = df_plot.sort_values(input_col).reset_index(drop=True)
     fig, ax = plt.subplots(figsize=PLOT_SETTINGS["external_comparison_figsize"])
-
-    ax.scatter(ordered[input_col], ordered[output_col], color="black", s=15, label="Aspen points")
-    ax.plot(ordered[input_col], ordered["Prediction"], color="black", linewidth=1.5, label="Gaussian model")
     ax.fill_between(
         ordered[input_col],
         ordered["Prediction"] - 1.96 * ordered["Predictive Std"],
@@ -1018,7 +1015,23 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         linewidth=0,
         zorder=1,
         label="95% interval",
-        )
+    )
+    ax.plot(
+        ordered[input_col],
+        ordered["Prediction"],
+        color="black",
+        linewidth=2.0,
+        zorder=3,
+        label="Gaussian model",
+    )
+    ax.scatter(
+        ordered[input_col],
+        ordered[output_col],
+        color="black",
+        s=30,
+        zorder=4,
+        label="Aspen points",
+    )
     ax.set_title("External Test: Gaussian Model vs Aspen Data", fontsize=PLOT_SETTINGS["title_fontsize"])
     ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
     ax.set_ylabel(output_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
