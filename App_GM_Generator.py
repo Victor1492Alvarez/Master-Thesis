@@ -61,7 +61,7 @@ PLOT_SETTINGS = {
     "prediction_figsize": (9.6, 9.6),
     "percent_error_figsize": (12.0, 6.0),
     "cv_figsize": (10.0, 6.0),
-    "external_comparison_figsize": (8.8, 5.0),
+    "external_comparison_figsize": (8.8, 6.0),
     "external_error_figsize": (12.0, 9.0),
     "title_fontsize": 10,
     "axis_label_fontsize": 9,
