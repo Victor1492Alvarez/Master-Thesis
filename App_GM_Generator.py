@@ -1019,10 +1019,10 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered["Prediction"] - 1.96 * ordered["Predictive Std"],
         ordered["Prediction"] + 1.96 * ordered["Predictive Std"],
         color="gray",
-        alpha=0.22,
+        alpha=0.20,
         linewidth=0,
         zorder=1,
-        label="95% interval",
+        label="95% Interval",
     )
     ax.plot(
         ordered[input_col],
@@ -1030,7 +1030,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         color="black",
         linewidth=2.0,
         zorder=3,
-        label="Gaussian model",
+        label="Gaussian Model",
     )
     ax.scatter(
         ordered[input_col],
@@ -1038,7 +1038,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         color="black",
         s=12,
         zorder=4,
-        label="Aspen points",
+        label="Aspen Simulation",
     )
     ax.set_title("External Test: Gaussian Model vs Aspen Data", fontsize=PLOT_SETTINGS["title_fontsize"])
     ax.set_xlabel(input_col, fontsize=PLOT_SETTINGS["axis_label_fontsize"])
