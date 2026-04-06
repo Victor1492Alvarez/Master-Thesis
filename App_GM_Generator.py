@@ -1018,7 +1018,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered[input_col],
         ordered["Prediction"] - 1.96 * ordered["Predictive Std"],
         ordered["Prediction"] + 1.96 * ordered["Predictive Std"],
-        color="gray",
+        color="light gray",
         alpha=0.20,
         linewidth=0,
         zorder=1,
@@ -1028,7 +1028,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered[input_col],
         ordered["Prediction"],
         color="black",
-        linewidth=2.0,
+        linewidth=1.5,
         zorder=3,
         label="Gaussian Model",
     )
@@ -1036,7 +1036,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered[input_col],
         ordered[output_col],
         color="black",
-        s=12,
+        s=10,
         zorder=4,
         label="Aspen Simulation",
     )
