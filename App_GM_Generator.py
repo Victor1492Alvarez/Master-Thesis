@@ -1036,7 +1036,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered[input_col],
         ordered[output_col],
         color="black",
-        s=20,
+        s=12,
         zorder=4,
         label="Aspen points",
     )
