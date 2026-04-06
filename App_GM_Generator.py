@@ -1018,7 +1018,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered[input_col],
         ordered["Prediction"] - 1.96 * ordered["Predictive Std"],
         ordered["Prediction"] + 1.96 * ordered["Predictive Std"],
-        color="light gray",
+        color="gray",
         alpha=0.20,
         linewidth=0,
         zorder=1,
