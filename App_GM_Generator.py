@@ -1022,7 +1022,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         alpha=0.20,
         linewidth=0,
         zorder=1,
-        label="95% Interval",
+        label="95% GP Predictive Interval",
     )
     ax.plot(
         ordered[input_col],
