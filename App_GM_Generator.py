@@ -1028,7 +1028,7 @@ def create_external_comparison_plot(df_plot: pd.DataFrame, input_col: str, outpu
         ordered[input_col],
         ordered["Prediction"],
         color="black",
-        linewidth=1,
+        linewidth=1.5,
         zorder=3,
         label="Gaussian Model",
     )
